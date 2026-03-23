@@ -14,8 +14,12 @@ struct ContentView: View {
                     libraryView
                 }
             }
-            .navigationTitle("Book Reader")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    LibraryTitleView(libraryURL: controller.libraryURL)
+                }
+
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if controller.libraryURL != nil {
                         Button {
@@ -77,9 +81,8 @@ struct ContentView: View {
 
     private var emptyLibraryView: some View {
         VStack(spacing: 20) {
-            Image(systemName: "books.vertical")
-                .font(.system(size: 54))
-                .foregroundStyle(.tint)
+            BooklightIconView(size: 108)
+                .shadow(color: .black.opacity(0.18), radius: 22, y: 10)
 
             VStack(spacing: 8) {
                 Text("Choose a Book Folder")
@@ -103,36 +106,8 @@ struct ContentView: View {
     }
 
     private var libraryView: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(controller.libraryURL?.lastPathComponent ?? "Library")
-                        .font(.headline)
-                    Text(controller.libraryURL?.path() ?? "")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-
-                    if let lastScanAt = controller.lastScanAt {
-                        Text("Last synced \(lastScanAt.formatted(date: .omitted, time: .shortened))")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            if !controller.activeBooks.isEmpty {
-                Section("Active Books") {
-                    ForEach(controller.activeBooks) { book in
-                        NavigationLink(value: book) {
-                            BookRow(book: book)
-                        }
-                    }
-                }
-            }
-
-            Section(controller.activeBooks.isEmpty ? "Books" : "Library") {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
                 if controller.books.isEmpty {
                     Text("No PDF or EPUB files found in the selected folder.")
                         .foregroundStyle(.secondary)
@@ -140,23 +115,87 @@ struct ContentView: View {
                     Text("No books match “\(controller.searchText)”")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(controller.otherBooks) { book in
-                        NavigationLink(value: book) {
-                            BookRow(book: book)
-                        }
+                    if !controller.activeBooks.isEmpty {
+                        BookGallerySection(
+                            title: "Active Books",
+                            books: controller.activeBooks,
+                            controller: controller
+                        )
+                    }
+
+                    if !controller.otherBooks.isEmpty || controller.activeBooks.isEmpty {
+                        BookGallerySection(
+                            title: controller.activeBooks.isEmpty ? "Books" : "Library",
+                            books: controller.otherBooks,
+                            controller: controller
+                        )
                     }
                 }
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 22)
         }
         .navigationDestination(for: Book.self) { book in
             ReaderContainerView(controller: controller, bookID: book.id)
         }
-        .listStyle(.insetGrouped)
+        .background(Color(uiColor: .systemGroupedBackground))
     }
 }
 
-private struct BookRow: View {
+private struct LibraryTitleView: View {
+    let libraryURL: URL?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            BooklightIconView(size: 28)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Book Reader")
+                    .font(.headline)
+                    .lineLimit(1)
+
+                if let libraryURL {
+                    Text(libraryURL.path())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: 320)
+    }
+}
+
+private struct BookGallerySection: View {
+    let title: String
+    let books: [Book]
+    @ObservedObject var controller: LibraryController
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 18, alignment: .top)
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title)
+                .font(.title3.weight(.semibold))
+
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                ForEach(books) { book in
+                    NavigationLink(value: book) {
+                        BookCard(book: book, fileURL: controller.absoluteURL(for: book))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct BookCard: View {
     let book: Book
+    let fileURL: URL?
 
     private static let relativeFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -165,11 +204,20 @@ private struct BookRow: View {
     }()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: book.format.symbolName)
-                .font(.title3)
-                .foregroundStyle(.tint)
-                .frame(width: 28, height: 28)
+        VStack(alignment: .leading, spacing: 12) {
+            ZStack(alignment: .topTrailing) {
+                BookThumbnailView(fileURL: fileURL, format: book.format)
+                    .aspectRatio(0.72, contentMode: .fit)
+                    .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
+
+                if book.isFinished {
+                    statusBadge("Finished", tint: .green)
+                        .padding(10)
+                } else if book.progress > 0 {
+                    statusBadge("\(Int((book.progress * 100).rounded()))%", tint: .accentColor)
+                        .padding(10)
+                }
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(book.title)
@@ -178,11 +226,7 @@ private struct BookRow: View {
 
                 HStack(spacing: 8) {
                     Text(book.displaySubtitle)
-                    if book.isFinished {
-                        Text("Finished")
-                    } else if book.progress > 0 {
-                        Text("\(Int((book.progress * 100).rounded()))%")
-                    } else {
+                    if !book.isFinished && book.progress == 0 {
                         Text("Unread")
                     }
                 }
@@ -201,6 +245,15 @@ private struct BookRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusBadge(_ label: String, tint: Color) -> some View {
+        Text(label)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint, in: Capsule())
     }
 }
