@@ -11,6 +11,9 @@ struct EPUBDocument: Sendable {
     var title: String
     var extractedRootURL: URL
     var spine: [SpineItem]
+    /// URL of the combined single-page HTML that merges all spine chapters
+    /// into one continuous scrollable document.
+    var combinedHTMLURL: URL
 }
 
 enum EPUBPreparation {
@@ -95,11 +98,244 @@ enum EPUBPreparation {
             throw EPUBError.missingReadableContent
         }
 
+        // Build a single combined HTML that merges all chapters for continuous scrolling.
+        let combinedURL = try EPUBCombiner.buildCombinedHTML(
+            spine: spineItems,
+            extractedRootURL: extractedRoot
+        )
+
         return EPUBDocument(
             title: package.title?.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).nonEmpty ?? fallbackTitle,
             extractedRootURL: extractedRoot,
-            spine: spineItems
+            spine: spineItems,
+            combinedHTMLURL: combinedURL
         )
+    }
+}
+
+// MARK: - Combined HTML Generator
+
+/// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
+/// Each chapter's body content is extracted, resource paths are rewritten to be relative
+/// to the extraction root, and everything is wrapped in chapter dividers.
+/// The result is cached as `_combined.html` in the extraction directory — it's automatically
+/// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
+enum EPUBCombiner {
+    /// Builds (or returns cached) combined HTML from all spine items.
+    /// - Returns: URL of the `_combined.html` file in the extraction directory.
+    static func buildCombinedHTML(
+        spine: [EPUBDocument.SpineItem],
+        extractedRootURL: URL
+    ) throws -> URL {
+        let combinedURL = extractedRootURL.appending(path: "_combined.html")
+
+        // If the combined file already exists (from a previous open), reuse it.
+        if FileManager.default.fileExists(atPath: combinedURL.path()) {
+            return combinedURL
+        }
+
+        var stylesheetPaths: [String] = []
+        var chapterBodies: [(index: Int, html: String)] = []
+
+        let rootPath = extractedRootURL.path()
+
+        for item in spine {
+            guard let rawContent = try? String(contentsOf: item.url, encoding: .utf8) else {
+                continue
+            }
+
+            // Compute the chapter's directory relative to the extraction root,
+            // so we can prefix relative resource paths (images, CSS, etc.).
+            let chapterDir: String
+            let chapterFilePath = item.url.path()
+            if chapterFilePath.hasPrefix(rootPath) {
+                let relativePath = String(chapterFilePath.dropFirst(rootPath.count).drop(while: { $0 == "/" }))
+                let components = relativePath.split(separator: "/").dropLast()
+                chapterDir = components.isEmpty ? "" : components.joined(separator: "/") + "/"
+            } else {
+                chapterDir = ""
+            }
+
+            // Collect <link rel="stylesheet"> hrefs from the chapter's <head>.
+            collectStylesheets(from: rawContent, chapterDir: chapterDir, into: &stylesheetPaths)
+
+            // Extract the <body> content (everything between <body...> and </body>).
+            let bodyContent = extractBody(from: rawContent)
+
+            // Rewrite relative resource paths (src="...", href="...") to be
+            // relative to the extraction root by prefixing with the chapter's directory.
+            var rewritten = rewriteResourcePaths(in: bodyContent, chapterDir: chapterDir)
+            // Add lazy loading to images so off-screen content doesn't consume memory.
+            rewritten = addLazyLoading(to: rewritten)
+
+            chapterBodies.append((index: item.index, html: rewritten))
+        }
+
+        // Build the combined HTML document.
+        var html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+        """
+
+        // Include each unique stylesheet once at the top.
+        for path in stylesheetPaths {
+            html += "<link rel=\"stylesheet\" href=\"\(escapeHTMLAttribute(path))\">\n"
+        }
+
+        html += """
+        <style>
+        /* Divider between chapters for visual separation */
+        .epub-chapter-divider {
+            height: 1px;
+            background: rgba(128, 128, 128, 0.3);
+            margin: 3em 0;
+        }
+        </style>
+        </head>
+        <body>
+
+        """
+
+        for (offset, chapter) in chapterBodies.enumerated() {
+            if offset > 0 {
+                html += "<div class=\"epub-chapter-divider\"></div>\n"
+            }
+            html += "<div id=\"chapter-\(chapter.index)\" class=\"epub-chapter\" data-chapter-index=\"\(chapter.index)\">\n"
+            html += chapter.html
+            html += "\n</div>\n"
+        }
+
+        html += """
+        </body>
+        </html>
+        """
+
+        try html.write(to: combinedURL, atomically: true, encoding: .utf8)
+        return combinedURL
+    }
+
+    // MARK: - HTML Parsing Helpers
+
+    /// Extracts the inner content of the <body> element.
+    /// Falls back to the full content if no <body> tag is found (some EPUBs omit it).
+    private static func extractBody(from html: String) -> String {
+        // Find opening <body...> tag (case-insensitive).
+        guard let bodyOpenRange = html.range(of: "<body[^>]*>", options: [.regularExpression, .caseInsensitive]) else {
+            return html
+        }
+        let afterBodyOpen = html[bodyOpenRange.upperBound...]
+
+        // Find closing </body> tag.
+        guard let bodyCloseRange = afterBodyOpen.range(of: "</body>", options: [.caseInsensitive]) else {
+            return String(afterBodyOpen)
+        }
+
+        return String(afterBodyOpen[..<bodyCloseRange.lowerBound])
+    }
+
+    /// Finds <link rel="stylesheet" href="..."> in the HTML head and collects
+    /// their hrefs (prefixed with chapterDir for correct resolution).
+    private static func collectStylesheets(
+        from html: String,
+        chapterDir: String,
+        into paths: inout [String]
+    ) {
+        // Match <link> tags with rel="stylesheet" and extract the href value.
+        // This handles both single and double quotes, and attributes in any order.
+        let linkPattern = #"<link\b[^>]*rel\s*=\s*["']stylesheet["'][^>]*href\s*=\s*["']([^"']+)["'][^>]*/?\s*>"#
+        let altPattern = #"<link\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*rel\s*=\s*["']stylesheet["'][^>]*/?\s*>"#
+
+        for pattern in [linkPattern, altPattern] {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                continue
+            }
+            let nsRange = NSRange(html.startIndex..., in: html)
+            for match in regex.matches(in: html, range: nsRange) {
+                guard let hrefRange = Range(match.range(at: 1), in: html) else { continue }
+                let href = String(html[hrefRange])
+                // Skip absolute URLs (http/https/data).
+                guard !href.hasPrefix("http") && !href.hasPrefix("data:") else { continue }
+                let fullPath = chapterDir + href
+                if !paths.contains(fullPath) {
+                    paths.append(fullPath)
+                }
+            }
+        }
+    }
+
+    /// Rewrites relative `src` and `href` attribute values by prefixing them with the
+    /// chapter's directory path. Skips absolute URLs, data URIs, fragment-only refs,
+    /// and stylesheet links (handled separately).
+    private static func rewriteResourcePaths(in html: String, chapterDir: String) -> String {
+        // If the chapter is at the extraction root, no rewriting needed.
+        guard !chapterDir.isEmpty else { return html }
+
+        // Match src="..." and href="..." attributes, capturing the attribute value.
+        let pattern = #"((?:src|href)\s*=\s*["'])([^"']+)(["'])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return html
+        }
+
+        var result = html
+        let nsString = result as NSString
+
+        // Process matches in reverse order so replacements don't shift offsets.
+        let matches = regex.matches(in: result, range: NSRange(location: 0, length: nsString.length))
+        for match in matches.reversed() {
+            guard match.numberOfRanges == 4,
+                  let prefixRange = Range(match.range(at: 1), in: result),
+                  let valueRange = Range(match.range(at: 2), in: result),
+                  let suffixRange = Range(match.range(at: 3), in: result) else {
+                continue
+            }
+
+            let value = String(result[valueRange])
+
+            // Skip values that are already absolute, data URIs, or fragment-only references.
+            if value.hasPrefix("http") || value.hasPrefix("data:") || value.hasPrefix("#") || value.hasPrefix("/") {
+                continue
+            }
+
+            let rewritten = chapterDir + value
+            let replacement = String(result[prefixRange]) + rewritten + String(result[suffixRange])
+            result.replaceSubrange(match.range(at: 0).asRange(in: result)!, with: replacement)
+        }
+
+        return result
+    }
+
+    /// Adds `loading="lazy"` to <img> tags that don't already have it,
+    /// so off-screen images don't consume memory until scrolled into view.
+    private static func addLazyLoading(to html: String) -> String {
+        let pattern = #"(<img\b)(?![^>]*loading\s*=)([^>]*>)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+            return html
+        }
+        return regex.stringByReplacingMatches(
+            in: html,
+            range: NSRange(html.startIndex..., in: html),
+            withTemplate: "$1 loading=\"lazy\"$2"
+        )
+    }
+
+    private static func escapeHTMLAttribute(_ string: String) -> String {
+        string
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
+// MARK: - NSRange → Range<String.Index> helper
+
+private extension NSRange {
+    func asRange(in string: String) -> Range<String.Index>? {
+        Range(self, in: string)
     }
 }
 

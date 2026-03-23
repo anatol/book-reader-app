@@ -26,36 +26,30 @@ struct EPUBBookView: View {
     @State private var document: EPUBDocument?
     @State private var loadError: String?
     @State private var isPreparing = true
-    @State private var navigationRequest = EPUBNavigationRequest(chapterIndex: 0, chapterProgress: 0)
+    /// Initial scroll target computed from saved progress when the document loads.
+    @State private var initialScrollTarget: EPUBScrollTarget?
     @StateObject private var scrollProxy = EPUBScrollProxy()
 
     var body: some View {
         Group {
             if let document {
-                VStack(spacing: 0) {
-                    EPUBWebView(
-                        document: document,
-                        request: navigationRequest,
-                        scrollProxy: scrollProxy
-                    ) { chapterIndex, chapterProgress in
-                        let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
-                        let clampedProgress = chapterProgress.clampedToUnit
-                        let overallProgress = document.spine.count <= 1
-                            ? clampedProgress
-                            : (Double(clampedIndex) + clampedProgress) / Double(document.spine.count)
+                EPUBWebView(
+                    document: document,
+                    initialScrollTarget: initialScrollTarget,
+                    scrollProxy: scrollProxy
+                ) { chapterIndex, chapterProgress, overallProgress in
+                    // Clamp values to valid ranges before persisting.
+                    let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
+                    let clampedChapterProgress = chapterProgress.clampedToUnit
+                    let clampedOverall = overallProgress.clampedToUnit
 
-                        controller.saveEPUBPosition(
-                            for: book,
-                            chapterIndex: clampedIndex,
-                            chapterPath: document.spine[clampedIndex].href,
-                            chapterProgress: clampedProgress,
-                            overallProgress: overallProgress
-                        )
-                    }
-
-                    if document.spine.count > 1 {
-                        readerControls(for: document)
-                    }
+                    controller.saveEPUBPosition(
+                        for: book,
+                        chapterIndex: clampedIndex,
+                        chapterPath: document.spine[clampedIndex].href,
+                        chapterProgress: clampedChapterProgress,
+                        overallProgress: clampedOverall
+                    )
                 }
             } else if isPreparing {
                 ProgressView("Opening EPUB…")
@@ -81,37 +75,6 @@ struct EPUBBookView: View {
         }
     }
 
-    private func readerControls(for document: EPUBDocument) -> some View {
-        HStack {
-            Button {
-                let nextIndex = max(navigationRequest.chapterIndex - 1, 0)
-                navigationRequest = .init(chapterIndex: nextIndex, chapterProgress: 0)
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
-            }
-            .disabled(navigationRequest.chapterIndex == 0)
-
-            Spacer()
-
-            Text("Chapter \(navigationRequest.chapterIndex + 1) of \(document.spine.count)")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button {
-                let nextIndex = min(navigationRequest.chapterIndex + 1, document.spine.count - 1)
-                navigationRequest = .init(chapterIndex: nextIndex, chapterProgress: 0)
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-            }
-            .disabled(navigationRequest.chapterIndex >= document.spine.count - 1)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(.bar)
-    }
-
     private func loadDocument() async {
         isPreparing = true
         loadError = nil
@@ -124,18 +87,30 @@ struct EPUBBookView: View {
             await MainActor.run {
                 document = prepared
 
+                // Compute the initial scroll target from saved progress.
+                // We use the saved overall progress when available, but for backward
+                // compatibility with old saves that only have chapter index + chapter progress,
+                // we compute an approximate scroll position from those values.
+                let storedOverall = book.progressState?.progress ?? 0
                 let storedChapterPath = book.progressState?.epubChapterPath
                 let storedChapterIndex = book.progressState?.epubChapterIndex ?? 0
-                let storedProgress = book.progressState?.epubChapterProgress ?? 0
+                let storedChapterProgress = book.progressState?.epubChapterProgress ?? 0
 
-                let initialIndex: Int
-                if let storedChapterPath, let resolvedIndex = prepared.spine.firstIndex(where: { $0.href == storedChapterPath }) {
-                    initialIndex = resolvedIndex
+                // Resolve the chapter index, preferring path-based lookup for robustness
+                // (handles chapter reordering in updated EPUBs).
+                let resolvedIndex: Int
+                if let storedChapterPath,
+                   let pathIndex = prepared.spine.firstIndex(where: { $0.href == storedChapterPath }) {
+                    resolvedIndex = pathIndex
                 } else {
-                    initialIndex = min(max(storedChapterIndex, 0), max(prepared.spine.count - 1, 0))
+                    resolvedIndex = min(max(storedChapterIndex, 0), max(prepared.spine.count - 1, 0))
                 }
 
-                navigationRequest = .init(chapterIndex: initialIndex, chapterProgress: storedProgress)
+                initialScrollTarget = EPUBScrollTarget(
+                    overallProgress: storedOverall,
+                    chapterIndex: resolvedIndex,
+                    chapterProgress: storedChapterProgress
+                )
                 isPreparing = false
             }
         } catch {
@@ -147,22 +122,24 @@ struct EPUBBookView: View {
     }
 }
 
-private struct EPUBNavigationRequest: Equatable {
+/// Describes where to scroll when the combined document finishes loading.
+/// Uses overall progress as the primary target, with chapter-based fallback
+/// for backward compatibility with old saved positions.
+private struct EPUBScrollTarget: Equatable {
     var token = UUID()
+    var overallProgress: Double
     var chapterIndex: Int
     var chapterProgress: Double
-
-    init(chapterIndex: Int, chapterProgress: Double) {
-        self.chapterIndex = chapterIndex
-        self.chapterProgress = chapterProgress
-    }
 }
+
+// MARK: - WKWebView wrapper for continuous EPUB scrolling
 
 private struct EPUBWebView: UIViewRepresentable {
     let document: EPUBDocument
-    let request: EPUBNavigationRequest
+    let initialScrollTarget: EPUBScrollTarget?
     let scrollProxy: EPUBScrollProxy
-    let onProgressChange: (Int, Double) -> Void
+    /// Called with (chapterIndex, chapterProgress, overallProgress) as the user scrolls.
+    let onProgressChange: (Int, Double, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(document: document, onProgressChange: onProgressChange)
@@ -185,7 +162,7 @@ private struct EPUBWebView: UIViewRepresentable {
         // Wire up scroll proxy so SwiftUI key events can drive scrolling.
         scrollProxy.webView = webView
         context.coordinator.attach(webView)
-        context.coordinator.load(request: request)
+        context.coordinator.loadCombinedDocument(scrollTarget: initialScrollTarget)
         return webView
     }
 
@@ -193,16 +170,41 @@ private struct EPUBWebView: UIViewRepresentable {
         context.coordinator.document = document
         context.coordinator.onProgressChange = onProgressChange
         scrollProxy.webView = webView
-        context.coordinator.load(request: request)
+        context.coordinator.loadCombinedDocument(scrollTarget: initialScrollTarget)
     }
 
+    // MARK: - JavaScript for tracking scroll position across combined chapters
+
+    /// Tracks the overall scroll progress and determines which chapter div is currently
+    /// visible at the top of the viewport. Posts a JSON message with chapterIndex,
+    /// chapterProgress (within that chapter), and overallProgress (across entire document).
     static let scrollTrackingScript = """
     const sendProgress = () => {
       const root = document.documentElement;
-      const max = Math.max(root.scrollHeight - window.innerHeight, 1);
-      const progress = Math.max(0, Math.min(1, window.scrollY / max));
-      window.webkit.messageHandlers.readerProgress.postMessage(progress);
+      const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+      const overallProgress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
+
+      // Find which chapter div is at (or just above) the viewport top.
+      const chapters = document.querySelectorAll('.epub-chapter');
+      let currentChapter = 0;
+      let chapterProgress = 0;
+      for (let i = chapters.length - 1; i >= 0; i--) {
+        const rect = chapters[i].getBoundingClientRect();
+        if (rect.top <= 10) {
+          currentChapter = parseInt(chapters[i].dataset.chapterIndex) || 0;
+          const chapterHeight = Math.max(rect.height, 1);
+          chapterProgress = Math.max(0, Math.min(1, -rect.top / chapterHeight));
+          break;
+        }
+      }
+
+      window.webkit.messageHandlers.readerProgress.postMessage({
+        chapterIndex: currentChapter,
+        chapterProgress: chapterProgress,
+        overallProgress: overallProgress
+      });
     };
+
     let timeout = null;
     window.addEventListener('scroll', () => {
       if (timeout) return;
@@ -214,16 +216,19 @@ private struct EPUBWebView: UIViewRepresentable {
     window.addEventListener('load', () => setTimeout(sendProgress, 80));
     """
 
+    // MARK: - Coordinator
+
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var document: EPUBDocument
-        var onProgressChange: (Int, Double) -> Void
+        var onProgressChange: (Int, Double, Double) -> Void
 
         private weak var webView: WKWebView?
+        /// Tracks whether the combined document has been loaded to avoid redundant loads.
         private var currentToken: UUID?
-        private var requestedChapterIndex = 0
-        private var requestedChapterProgress = 0.0
+        /// The scroll target to restore after the document finishes loading.
+        private var pendingScrollTarget: EPUBScrollTarget?
 
-        init(document: EPUBDocument, onProgressChange: @escaping (Int, Double) -> Void) {
+        init(document: EPUBDocument, onProgressChange: @escaping (Int, Double, Double) -> Void) {
             self.document = document
             self.onProgressChange = onProgressChange
         }
@@ -232,37 +237,73 @@ private struct EPUBWebView: UIViewRepresentable {
             self.webView = webView
         }
 
-        func load(request: EPUBNavigationRequest) {
-            guard currentToken != request.token else {
-                return
-            }
-            currentToken = request.token
-            requestedChapterIndex = min(max(request.chapterIndex, 0), max(document.spine.count - 1, 0))
-            requestedChapterProgress = request.chapterProgress.clampedToUnit
+        /// Loads the combined HTML document if not already loaded.
+        func loadCombinedDocument(scrollTarget: EPUBScrollTarget?) {
+            let token = scrollTarget?.token
+            guard currentToken != token else { return }
+            currentToken = token
+            pendingScrollTarget = scrollTarget
 
-            let chapter = document.spine[requestedChapterIndex]
-            webView?.loadFileURL(chapter.url, allowingReadAccessTo: document.extractedRootURL)
+            webView?.loadFileURL(
+                document.combinedHTMLURL,
+                allowingReadAccessTo: document.extractedRootURL
+            )
         }
+
+        // MARK: WKNavigationDelegate
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            let clampedProgress = requestedChapterProgress.clampedToUnit
-            let script = """
-            const root = document.documentElement;
-            const max = Math.max(root.scrollHeight - window.innerHeight, 1);
-            window.scrollTo(0, max * \(clampedProgress));
-            """
-            webView.evaluateJavaScript(script) { [weak self] _, _ in
-                guard let self else { return }
-                self.onProgressChange(self.requestedChapterIndex, clampedProgress)
+            guard let target = pendingScrollTarget else { return }
+
+            // Scroll to the saved position. We prefer overall progress because it maps
+            // directly to a scroll offset. For old saves where overall progress may be
+            // approximate, we use chapter-based scrolling as a fallback when progress is 0
+            // but a non-zero chapter index exists.
+            let useChapterFallback = target.overallProgress == 0 && target.chapterIndex > 0
+            let script: String
+
+            if useChapterFallback {
+                // Scroll to the chapter element and then offset by chapter progress.
+                script = """
+                const chapter = document.getElementById('chapter-\(target.chapterIndex)');
+                if (chapter) {
+                    const rect = chapter.getBoundingClientRect();
+                    const chapterHeight = Math.max(rect.height, 1);
+                    const offset = chapterHeight * \(target.chapterProgress.clampedToUnit);
+                    window.scrollTo(0, window.scrollY + rect.top + offset);
+                }
+                """
+            } else {
+                // Use overall progress to compute the absolute scroll position.
+                let clampedProgress = target.overallProgress.clampedToUnit
+                script = """
+                const root = document.documentElement;
+                const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                window.scrollTo(0, maxScroll * \(clampedProgress));
+                """
             }
+
+            webView.evaluateJavaScript(script)
         }
 
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // MARK: WKScriptMessageHandler
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage
+        ) {
             guard message.name == "readerProgress",
-                  let progress = message.body as? Double else {
+                  let body = message.body as? [String: Any],
+                  let chapterIndex = body["chapterIndex"] as? Int,
+                  let chapterProgress = body["chapterProgress"] as? Double,
+                  let overallProgress = body["overallProgress"] as? Double else {
                 return
             }
-            onProgressChange(requestedChapterIndex, progress.clampedToUnit)
+            onProgressChange(
+                chapterIndex,
+                chapterProgress.clampedToUnit,
+                overallProgress.clampedToUnit
+            )
         }
     }
 }
