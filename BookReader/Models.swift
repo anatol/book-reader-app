@@ -37,6 +37,9 @@ struct BookProgressState: Codable, Hashable, Sendable {
     var epubChapterIndex: Int?
     var epubChapterPath: String?
     var epubChapterProgress: Double?
+    /// Per-book font size preference for EPUB reading, as a percentage (100 = default).
+    /// nil means use the default size (100%).
+    var epubFontSizePercent: Int?
 
     func normalized() -> BookProgressState {
         var copy = self
@@ -149,7 +152,8 @@ extension BookProgressState {
         chapterPath: String,
         chapterProgress: Double,
         overallProgress: Double,
-        lastOpenedAt: Date
+        lastOpenedAt: Date,
+        fontSizePercent: Int? = nil
     ) -> BookProgressState {
         BookProgressState(
             bookID: bookID,
@@ -161,7 +165,8 @@ extension BookProgressState {
             pdfPageCount: nil,
             epubChapterIndex: max(chapterIndex, 0),
             epubChapterPath: chapterPath,
-            epubChapterProgress: chapterProgress.clampedToUnit
+            epubChapterProgress: chapterProgress.clampedToUnit,
+            epubFontSizePercent: fontSizePercent
         ).normalized()
     }
 }

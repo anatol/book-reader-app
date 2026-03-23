@@ -2,10 +2,18 @@ import SwiftUI
 import WebKit
 
 /// Proxy object that bridges SwiftUI key events to the underlying WKWebView,
-/// allowing Space / Shift+Space to scroll by one viewport height.
+/// allowing Space / Shift+Space to scroll by one viewport height and
+/// Shift+"+"/"-" to adjust font size.
 @MainActor
 final class EPUBScrollProxy: ObservableObject {
     weak var webView: WKWebView?
+
+    /// Current font size as a percentage of the default (100%). Range: 50–200%.
+    @Published var fontSizePercent: Int = 100
+
+    private static let minFontSize = 50
+    private static let maxFontSize = 200
+    private static let fontSizeStep = 10
 
     /// Scroll the EPUB content down by ~90% of the viewport (slight overlap for context).
     func scrollPageDown() {
@@ -15,6 +23,47 @@ final class EPUBScrollProxy: ObservableObject {
     /// Scroll the EPUB content up by ~90% of the viewport.
     func scrollPageUp() {
         webView?.evaluateJavaScript("window.scrollBy(0, -window.innerHeight * 0.9)")
+    }
+
+    /// Increase font size by one step (10%), capped at 200%.
+    func increaseFontSize() {
+        fontSizePercent = min(fontSizePercent + Self.fontSizeStep, Self.maxFontSize)
+        applyFontSize()
+    }
+
+    /// Decrease font size by one step (10%), floored at 50%.
+    func decreaseFontSize() {
+        fontSizePercent = max(fontSizePercent - Self.fontSizeStep, Self.minFontSize)
+        applyFontSize()
+    }
+
+    /// Injects CSS to override the root font size, preserving the current reading position.
+    /// Uses both font-size on <html> (works for em/rem-based EPUBs) and
+    /// -webkit-text-size-adjust on <body> (works for EPUBs using absolute px sizing).
+    ///
+    /// To keep the reading position stable across the text reflow caused by a font size change,
+    /// we record the progress ratio (scrollY / maxScroll) before the change and restore
+    /// the equivalent scroll offset after the DOM reflows.
+    func applyFontSize() {
+        let js = """
+        (function() {
+            // Remember the current reading position as a fraction of total scrollable height.
+            var root = document.documentElement;
+            var maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+            var progressRatio = window.scrollY / maxScroll;
+
+            // Apply the new font size.
+            root.style.fontSize = '\(fontSizePercent)%';
+            document.body.style.webkitTextSizeAdjust = '\(fontSizePercent)%';
+
+            // After the DOM reflows, restore the reading position using the saved ratio.
+            requestAnimationFrame(function() {
+                var newMaxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
+                window.scrollTo(0, newMaxScroll * progressRatio);
+            });
+        })();
+        """
+        webView?.evaluateJavaScript(js)
     }
 }
 
@@ -36,7 +85,8 @@ struct EPUBBookView: View {
                 EPUBWebView(
                     document: document,
                     initialScrollTarget: initialScrollTarget,
-                    scrollProxy: scrollProxy
+                    scrollProxy: scrollProxy,
+                    initialFontSizePercent: scrollProxy.fontSizePercent
                 ) { chapterIndex, chapterProgress, overallProgress in
                     // Clamp values to valid ranges before persisting.
                     let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
@@ -67,9 +117,25 @@ struct EPUBBookView: View {
             }
             return .handled
         }
+        // Shift+"+" increases font size, Shift+"-" (or just "-") decreases it.
+        .onKeyPress(characters: .init(charactersIn: "+="), phases: .down) { keyPress in
+            guard keyPress.modifiers.contains(.shift) else { return .ignored }
+            scrollProxy.increaseFontSize()
+            controller.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
+            return .handled
+        }
+        .onKeyPress(characters: .init(charactersIn: "-_"), phases: .down) { keyPress in
+            guard keyPress.modifiers.contains(.shift) else { return .ignored }
+            scrollProxy.decreaseFontSize()
+            controller.saveEPUBFontSize(for: book, fontSizePercent: scrollProxy.fontSizePercent)
+            return .handled
+        }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: book.id) {
+            // Restore saved font size preference before the document loads,
+            // so it's ready to apply when the web view finishes navigation.
+            scrollProxy.fontSizePercent = book.progressState?.epubFontSizePercent ?? 100
             controller.markOpened(book)
             await loadDocument()
         }
@@ -138,11 +204,13 @@ private struct EPUBWebView: UIViewRepresentable {
     let document: EPUBDocument
     let initialScrollTarget: EPUBScrollTarget?
     let scrollProxy: EPUBScrollProxy
+    /// Initial font size percentage to apply after the document loads.
+    let initialFontSizePercent: Int
     /// Called with (chapterIndex, chapterProgress, overallProgress) as the user scrolls.
     let onProgressChange: (Int, Double, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(document: document, onProgressChange: onProgressChange)
+        Coordinator(document: document, initialFontSizePercent: initialFontSizePercent, onProgressChange: onProgressChange)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -227,9 +295,12 @@ private struct EPUBWebView: UIViewRepresentable {
         private var currentToken: UUID?
         /// The scroll target to restore after the document finishes loading.
         private var pendingScrollTarget: EPUBScrollTarget?
+        /// Font size percentage to apply after document load (restored from saved state).
+        private var initialFontSizePercent: Int
 
-        init(document: EPUBDocument, onProgressChange: @escaping (Int, Double, Double) -> Void) {
+        init(document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void) {
             self.document = document
+            self.initialFontSizePercent = initialFontSizePercent
             self.onProgressChange = onProgressChange
         }
 
@@ -255,16 +326,29 @@ private struct EPUBWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard let target = pendingScrollTarget else { return }
 
+            // Apply saved font size FIRST so the DOM reflows before we compute
+            // scroll offsets — otherwise the position would be wrong for the
+            // final layout.
+            let fontSizeJS: String
+            if initialFontSizePercent != 100 {
+                fontSizeJS = """
+                document.documentElement.style.fontSize = '\(initialFontSizePercent)%';
+                document.body.style.webkitTextSizeAdjust = '\(initialFontSizePercent)%';
+                """
+            } else {
+                fontSizeJS = ""
+            }
+
             // Scroll to the saved position. We prefer overall progress because it maps
             // directly to a scroll offset. For old saves where overall progress may be
             // approximate, we use chapter-based scrolling as a fallback when progress is 0
             // but a non-zero chapter index exists.
             let useChapterFallback = target.overallProgress == 0 && target.chapterIndex > 0
-            let script: String
+            let scrollJS: String
 
             if useChapterFallback {
                 // Scroll to the chapter element and then offset by chapter progress.
-                script = """
+                scrollJS = """
                 const chapter = document.getElementById('chapter-\(target.chapterIndex)');
                 if (chapter) {
                     const rect = chapter.getBoundingClientRect();
@@ -276,14 +360,24 @@ private struct EPUBWebView: UIViewRepresentable {
             } else {
                 // Use overall progress to compute the absolute scroll position.
                 let clampedProgress = target.overallProgress.clampedToUnit
-                script = """
+                scrollJS = """
                 const root = document.documentElement;
                 const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
                 window.scrollTo(0, maxScroll * \(clampedProgress));
                 """
             }
 
-            webView.evaluateJavaScript(script)
+            // Apply font size first, then scroll after reflow completes.
+            if fontSizeJS.isEmpty {
+                webView.evaluateJavaScript(scrollJS)
+            } else {
+                webView.evaluateJavaScript(fontSizeJS) { _, _ in
+                    // Use requestAnimationFrame to ensure the DOM has reflowed
+                    // with the new font size before computing scroll position.
+                    let wrappedScroll = "requestAnimationFrame(function() { \(scrollJS) });"
+                    webView.evaluateJavaScript(wrappedScroll)
+                }
+            }
         }
 
         // MARK: WKScriptMessageHandler

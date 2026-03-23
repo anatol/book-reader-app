@@ -250,6 +250,15 @@ final class LibraryController: ObservableObject {
         schedulePersist(state: state)
     }
 
+    /// Persists just the EPUB font size preference for a book, preserving all other progress fields.
+    func saveEPUBFontSize(for book: Book, fontSizePercent: Int) {
+        guard var state = book.progressState else { return }
+        state.epubFontSizePercent = fontSizePercent
+        state.updatedAt = .now
+        apply(state: state.normalized(), toBookID: book.id)
+        schedulePersist(state: state)
+    }
+
     private func startPolling() {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -640,6 +649,19 @@ final class LibraryController: ObservableObject {
         merged.lastOpenedAt = [normalizedLocal.lastOpenedAt, normalizedRemote.lastOpenedAt].compactMap { $0 }.max()
         merged.updatedAt = max(normalizedLocal.updatedAt, normalizedRemote.updatedAt)
         merged.isFinished = normalizedLocal.isFinished || normalizedRemote.isFinished || merged.progress >= 0.999
+
+        // Font size is a user preference independent of reading progress — take the
+        // most recently set value so a font change on one device isn't overwritten by
+        // a progress update on another device.
+        if normalizedLocal.epubFontSizePercent != nil && normalizedRemote.epubFontSizePercent != nil {
+            merged.epubFontSizePercent = normalizedLocal.updatedAt >= normalizedRemote.updatedAt
+                ? normalizedLocal.epubFontSizePercent
+                : normalizedRemote.epubFontSizePercent
+        } else {
+            // One side has a value, the other doesn't — keep whichever is non-nil.
+            merged.epubFontSizePercent = normalizedLocal.epubFontSizePercent ?? normalizedRemote.epubFontSizePercent
+        }
+
         return merged.normalized()
     }
 }
