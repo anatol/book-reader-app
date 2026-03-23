@@ -149,19 +149,6 @@ private struct LibraryTitleView: View {
         HStack(spacing: 10) {
             BooklightIconView(size: 28)
                 .frame(width: 28, height: 28)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Book Reader")
-                    .font(.headline)
-                    .lineLimit(1)
-
-                if let libraryURL {
-                    Text(libraryURL.path())
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
         }
         .frame(maxWidth: 320)
     }
