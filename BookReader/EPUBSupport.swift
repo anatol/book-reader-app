@@ -14,7 +14,29 @@ struct EPUBDocument: Sendable {
 }
 
 enum EPUBPreparation {
+    /// Prepares an EPUB document for reading by extracting it to the cache directory.
+    /// Uses NSFileCoordinator to ensure the source file is accessible — this is required
+    /// on iOS when reading files from user-selected directories backed by file providers
+    /// (iCloud Drive, Syncthing, Files app, etc.). Without coordination, the file may
+    /// appear in directory listings but fail with "No such file" when reading content.
     static func prepareDocument(for book: Book, sourceURL: URL) throws -> EPUBDocument {
+        var coordinatorError: NSError?
+        var result: Result<EPUBDocument, Error>!
+
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(readingItemAt: sourceURL, options: .withoutChanges, error: &coordinatorError) { coordinatedURL in
+            result = Result { try prepareFromCoordinatedURL(for: book, sourceURL: coordinatedURL) }
+        }
+
+        if let coordinatorError {
+            throw coordinatorError
+        }
+        return try result.get()
+    }
+
+    /// The actual preparation logic, called with a coordinated URL that the system
+    /// guarantees is accessible on disk.
+    private static func prepareFromCoordinatedURL(for book: Book, sourceURL: URL) throws -> EPUBDocument {
         let fileManager = FileManager.default
         let cacheRoot = try fileManager.url(
             for: .cachesDirectory,
@@ -29,10 +51,12 @@ enum EPUBPreparation {
         let extractedRoot = cacheRoot.appending(path: book.id, directoryHint: .isDirectory)
         let versionURL = extractedRoot.appending(path: ".version")
 
-        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path())
-        let fileSize = attributes[.size] as? NSNumber
-        let modifiedAt = attributes[.modificationDate] as? Date ?? .distantPast
-        let expectedVersion = "\(fileSize?.int64Value ?? 0)-\(Int(modifiedAt.timeIntervalSince1970))"
+        // Use URL-based resource values instead of path-based attributesOfItem —
+        // URL-based APIs respect security-scoped access better on iOS.
+        let resourceValues = try sourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let fileSize = Int64(resourceValues.fileSize ?? 0)
+        let modifiedAt = resourceValues.contentModificationDate ?? .distantPast
+        let expectedVersion = "\(fileSize)-\(Int(modifiedAt.timeIntervalSince1970))"
 
         let currentVersion = try? String(contentsOf: versionURL, encoding: .utf8)
         if currentVersion != expectedVersion {
