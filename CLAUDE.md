@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Code syle
+Add comments to the code that is not clear from the context
+
 ## Build Commands
 
 **iOS (compile-only verification):**
