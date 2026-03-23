@@ -691,16 +691,10 @@ final class LibraryController: ObservableObject {
 
         let normalizedLocal = local.normalized()
         let normalizedRemote = remote.normalized()
-        let epsilon = 0.0005
 
-        let selected: BookProgressState
-        if normalizedLocal.progress > normalizedRemote.progress + epsilon {
-            selected = normalizedLocal
-        } else if normalizedRemote.progress > normalizedLocal.progress + epsilon {
-            selected = normalizedRemote
-        } else {
-            selected = normalizedLocal.updatedAt >= normalizedRemote.updatedAt ? normalizedLocal : normalizedRemote
-        }
+        // Prioritize the most recently updated state so users can scroll backward
+        // without their position being overridden by their own 'furthest' state.
+        let selected = normalizedLocal.updatedAt >= normalizedRemote.updatedAt ? normalizedLocal : normalizedRemote
 
         var merged = selected
         merged.lastOpenedAt = [normalizedLocal.lastOpenedAt, normalizedRemote.lastOpenedAt].compactMap { $0 }.max()

@@ -153,10 +153,6 @@ struct EPUBBookView: View {
             await MainActor.run {
                 document = prepared
 
-                // Compute the initial scroll target from saved progress.
-                // We use the saved overall progress when available, but for backward
-                // compatibility with old saves that only have chapter index + chapter progress,
-                // we compute an approximate scroll position from those values.
                 let storedOverall = book.progressState?.progress ?? 0
                 let storedChapterPath = book.progressState?.epubChapterPath
                 let storedChapterIndex = book.progressState?.epubChapterIndex ?? 0
@@ -189,8 +185,8 @@ struct EPUBBookView: View {
 }
 
 /// Describes where to scroll when the combined document finishes loading.
-/// Uses overall progress as the primary target, with chapter-based fallback
-/// for backward compatibility with old saved positions.
+/// Uses chapterIndex and chapterProgress as the reliable targets for positioning,
+/// while overallProgress is passed along but not used for exact coordinate calculation.
 private struct EPUBScrollTarget: Equatable {
     var token = UUID()
     var overallProgress: Double
@@ -247,7 +243,9 @@ private struct EPUBWebView: UIViewRepresentable {
     /// visible at the top of the viewport. Posts a JSON message with chapterIndex,
     /// chapterProgress (within that chapter), and overallProgress (across entire document).
     static let scrollTrackingScript = """
+    window.isReadyForProgress = false;
     const sendProgress = () => {
+      if (!window.isReadyForProgress) return;
       const root = document.documentElement;
       const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
       const overallProgress = Math.max(0, Math.min(1, window.scrollY / maxScroll));
@@ -339,42 +337,36 @@ private struct EPUBWebView: UIViewRepresentable {
                 fontSizeJS = ""
             }
 
-            // Scroll to the saved position. We prefer overall progress because it maps
-            // directly to a scroll offset. For old saves where overall progress may be
-            // approximate, we use chapter-based scrolling as a fallback when progress is 0
-            // but a non-zero chapter index exists.
-            let useChapterFallback = target.overallProgress == 0 && target.chapterIndex > 0
+            // Always use chapter-based scrolling. It is much more robust against
+            // changes in text size, display area, and partial loading than `overallProgress`,
+            // which can point to arbitrary offsets if layout parameters change.
             let scrollJS: String
 
-            if useChapterFallback {
-                // Scroll to the chapter element and then offset by chapter progress.
-                scrollJS = """
-                const chapter = document.getElementById('chapter-\(target.chapterIndex)');
-                if (chapter) {
-                    const rect = chapter.getBoundingClientRect();
-                    const chapterHeight = Math.max(rect.height, 1);
-                    const offset = chapterHeight * \(target.chapterProgress.clampedToUnit);
-                    window.scrollTo(0, window.scrollY + rect.top + offset);
-                }
-                """
+            // Scroll to the chapter element and then offset by chapter progress.
+            scrollJS = """
+            const chapter = document.getElementById('chapter-\(target.chapterIndex)');
+            if (chapter) {
+                const rect = chapter.getBoundingClientRect();
+                const chapterHeight = Math.max(rect.height, 1);
+                const offset = chapterHeight * \(target.chapterProgress.clampedToUnit);
+                window.scrollTo(0, window.scrollY + rect.top + offset);
             } else {
-                // Use overall progress to compute the absolute scroll position.
-                let clampedProgress = target.overallProgress.clampedToUnit
-                scrollJS = """
                 const root = document.documentElement;
                 const maxScroll = Math.max(root.scrollHeight - window.innerHeight, 1);
-                window.scrollTo(0, maxScroll * \(clampedProgress));
-                """
+                window.scrollTo(0, maxScroll * \(target.overallProgress.clampedToUnit));
             }
+            """
 
             // Apply font size first, then scroll after reflow completes.
             if fontSizeJS.isEmpty {
-                webView.evaluateJavaScript(scrollJS)
+                webView.evaluateJavaScript(scrollJS) { _, _ in
+                    webView.evaluateJavaScript("window.isReadyForProgress = true; sendProgress();")
+                }
             } else {
                 webView.evaluateJavaScript(fontSizeJS) { _, _ in
                     // Use requestAnimationFrame to ensure the DOM has reflowed
                     // with the new font size before computing scroll position.
-                    let wrappedScroll = "requestAnimationFrame(function() { \(scrollJS) });"
+                    let wrappedScroll = "requestAnimationFrame(function() { \(scrollJS); setTimeout(() => { window.isReadyForProgress = true; sendProgress(); }, 50); });"
                     webView.evaluateJavaScript(wrappedScroll)
                 }
             }
