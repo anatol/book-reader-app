@@ -224,9 +224,9 @@ final class LibraryController: ObservableObject {
         schedulePersist(state: state)
     }
 
-    func savePDFPosition(for book: Book, pageIndex: Int, pageCount: Int) {
+    func savePDFPosition(for book: Book, pageIndex: Int, pageCount: Int, pageOffsetY: Double = 0) {
         let state = BookProgressState
-            .pdf(bookID: book.id, pageIndex: pageIndex, pageCount: pageCount, lastOpenedAt: .now)
+            .pdf(bookID: book.id, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY, lastOpenedAt: .now)
         apply(state: mergedLocalState(for: book.id, with: state), toBookID: book.id)
         schedulePersist(state: state)
     }
