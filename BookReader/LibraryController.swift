@@ -434,8 +434,79 @@ final class LibraryController: ObservableObject {
             records.append(record)
         }
 
-        let staleStateIDs = Set(progressStates.keys).subtracting(seenBookIDs)
-        for staleStateID in staleStateIDs {
+        // --- Rename detection ---
+        // If an active book (reading in progress) disappeared and a new file with the
+        // same size+format appeared, treat it as a rename: migrate the progress state
+        // to the new book ID so the reader doesn't lose their place.
+        var migratedStates = progressStates
+        let existingByID = Dictionary(uniqueKeysWithValues: existingDatabase.books.map { ($0.id, $0) })
+
+        let staleIDs = Set(progressStates.keys).subtracting(seenBookIDs)
+
+        // Disappeared active books: have progress state with reading in progress
+        // and a matching record in the previous database (so we know size+format).
+        let disappearedActive: [(id: String, state: BookProgressState, record: LibraryBookRecord)] = staleIDs.compactMap { id in
+            guard let state = progressStates[id],
+                  state.progress > 0, !state.isFinished,
+                  let record = existingByID[id] else {
+                return nil
+            }
+            return (id, state, record)
+        }
+
+        // Newly appeared books: on disk now but had no progress state and were not
+        // in the previous database (genuinely new files, not just rescanned ones).
+        let newBookIDs = seenBookIDs.subtracting(progressStates.keys).subtracting(existingByID.keys)
+        let newRecordsByID = Dictionary(uniqueKeysWithValues: records.filter { newBookIDs.contains($0.id) }.map { ($0.id, $0) })
+
+        var matchedStaleIDs = Set<String>()
+        var matchedNewIDs = Set<String>()
+
+        for disappeared in disappearedActive {
+            // Find new books with identical file size and format.
+            let candidates = newRecordsByID.values.filter { newRecord in
+                !matchedNewIDs.contains(newRecord.id)
+                    && newRecord.fileSize == disappeared.record.fileSize
+                    && newRecord.format == disappeared.record.format
+            }
+
+            // Only migrate when there's exactly one candidate to avoid wrong matches.
+            guard candidates.count == 1, let match = candidates.first else {
+                continue
+            }
+
+            // Migrate the progress state to the new book ID.
+            var newState = disappeared.state
+            newState.bookID = match.id
+            let newStateURL = stateDirectory.appending(path: "\(match.id).json")
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            try? encoder.encode(newState.normalized()).write(to: newStateURL, options: [.atomic])
+
+            // Remove the old state file.
+            let oldStateURL = stateDirectory.appending(path: "\(disappeared.id).json")
+            try? fileManager.removeItem(at: oldStateURL)
+
+            migratedStates[match.id] = newState.normalized()
+            migratedStates.removeValue(forKey: disappeared.id)
+
+            // Carry over the user-set title and original addedAt from the old record.
+            if let idx = records.firstIndex(where: { $0.id == match.id }) {
+                records[idx].title = disappeared.record.title
+                records[idx].addedAt = disappeared.record.addedAt
+                records[idx].lastKnownProgress = newState.progress
+                records[idx].lastOpenedAt = newState.lastOpenedAt
+                records[idx].isFinished = newState.isFinished
+            }
+
+            matchedStaleIDs.insert(disappeared.id)
+            matchedNewIDs.insert(match.id)
+        }
+
+        // Clean up progress files for books that truly disappeared (not renamed).
+        let unmatchedStaleIDs = staleIDs.subtracting(matchedStaleIDs)
+        for staleStateID in unmatchedStaleIDs {
             try? fileManager.removeItem(at: stateDirectory.appending(path: "\(staleStateID).json"))
         }
 
@@ -446,7 +517,7 @@ final class LibraryController: ObservableObject {
 
         try saveDatabase(database, to: metadataDirectory)
 
-        let books = database.books.map { Book(record: $0, progressState: progressStates[$0.id]) }
+        let books = database.books.map { Book(record: $0, progressState: migratedStates[$0.id]) }
         return LibraryScanResult(database: database, books: books)
     }
 
