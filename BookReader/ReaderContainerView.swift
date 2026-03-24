@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ReaderContainerView: View {
     @ObservedObject var controller: LibraryController
@@ -68,5 +69,24 @@ struct ReaderContainerView: View {
         }
         .navigationTitle(windowTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            controller.openBookTitle = windowTitle
+            setSceneTitle(windowTitle)
+        }
+        .onDisappear {
+            controller.openBookTitle = nil
+            // Restore the library title when leaving the reader.
+            let libraryTitle = ContentView.windowTitle(for: controller.trackingDirectoryURL)
+            setSceneTitle(libraryTitle)
+        }
+    }
+
+    /// Directly sets the Mac Catalyst window title via UIKit, because
+    /// SwiftUI's .navigationTitle on a pushed view does not update the title bar.
+    private func setSceneTitle(_ title: String) {
+        #if targetEnvironment(macCatalyst)
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        scene.title = title
+        #endif
     }
 }

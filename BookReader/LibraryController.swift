@@ -16,6 +16,9 @@ final class LibraryController: ObservableObject {
     @Published private(set) var debouncedSearchText = ""
     @Published var errorMessage: String?
 
+    /// Set by ReaderContainerView when a book is open; used by ContentView to update the window title.
+    @Published var openBookTitle: String?
+
     private let trackingBookmarkKey = "BookReader.trackingDirectoryBookmark"
     private let localLibrariesKey = "BookReader.localLibrariesBookmarks"
     private let defaults = UserDefaults.standard

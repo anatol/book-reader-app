@@ -17,7 +17,7 @@ struct ContentView: View {
             // Wrapped in a child view so it can read @Environment(\.isSearching)
             // and clear the search text when the user cancels/dismisses search.
             LibraryContentView(controller: controller)
-                .navigationTitle(Self.windowTitle(for: controller.trackingDirectoryURL))
+                .navigationTitle(controller.openBookTitle ?? Self.windowTitle(for: controller.trackingDirectoryURL))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .principal) {
