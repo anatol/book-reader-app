@@ -1,5 +1,5 @@
 import XCTest
-@testable import BookReader
+@testable import Booklight
 
 final class BookProgressTests: XCTestCase {
 

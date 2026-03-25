@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct BookReaderApp: App {
+struct BooklightApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

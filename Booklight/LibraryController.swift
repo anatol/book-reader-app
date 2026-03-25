@@ -19,8 +19,8 @@ final class LibraryController: ObservableObject {
     /// Set by ReaderContainerView when a book is open; used by ContentView to update the window title.
     @Published var openBookTitle: String?
 
-    private let trackingBookmarkKey = "BookReader.trackingDirectoryBookmark"
-    private let localLibrariesKey = "BookReader.localLibrariesBookmarks"
+    private let trackingBookmarkKey = "Booklight.trackingDirectoryBookmark"
+    private let localLibrariesKey = "Booklight.localLibrariesBookmarks"
     private let defaults = UserDefaults.standard
 
     private var refreshTask: Task<Void, Never>?
@@ -512,7 +512,7 @@ final class LibraryController: ObservableObject {
 
     private nonisolated static func cacheDirectory() -> URL {
         let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-        let cacheDir = urls[0].appending(path: "com.anatol.bookreader", directoryHint: .isDirectory)
+        let cacheDir = urls[0].appending(path: "com.anatol.Booklight", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         return cacheDir
     }

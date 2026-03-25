@@ -1,6 +1,6 @@
-# Book Reader
+# Booklight
 
-`Book Reader` is a lightweight SwiftUI reading application for Apple platforms. It is designed around a user-selected folder that acts as the entire library, with book progress stored alongside the books so Syncthing can move state across devices.
+`Booklight` is a lightweight SwiftUI reading application for Apple platforms. It is designed around a user-selected folder that acts as the entire library, with book progress stored alongside the books so Syncthing can move state across devices.
 
 ## What It Does
 
@@ -36,9 +36,9 @@ The app expects a flat library directory:
 ## Project Layout
 
 ```text
-BookReader.xcodeproj
-BookReader/
-  BookReaderApp.swift
+Booklight.xcodeproj
+Booklight/
+  BooklightApp.swift
   ContentView.swift
   LibraryController.swift
   Models.swift

@@ -9,12 +9,12 @@ Add comments to the code that is not clear from the context
 
 **iOS (compile-only verification):**
 ```bash
-xcodebuild -project BookReader.xcodeproj -scheme BookReader -destination 'generic/platform=iOS' -derivedDataPath /tmp/BookReaderDerived CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Booklight.xcodeproj -scheme Booklight -destination 'generic/platform=iOS' -derivedDataPath /tmp/BooklightDerived CODE_SIGNING_ALLOWED=NO build
 ```
 
 **Mac Catalyst:**
 ```bash
-xcodebuild -project BookReader.xcodeproj -scheme BookReader -destination 'generic/platform=macOS,variant=Mac Catalyst' -derivedDataPath /tmp/BookReaderDerived-catalyst CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Booklight.xcodeproj -scheme Booklight -destination 'generic/platform=macOS,variant=Mac Catalyst' -derivedDataPath /tmp/BooklightDerived-catalyst CODE_SIGNING_ALLOWED=NO build
 ```
 
 Use `-derivedDataPath /tmp/...` to avoid permissions issues. `CODE_SIGNING_ALLOWED=NO` for CI-like builds.

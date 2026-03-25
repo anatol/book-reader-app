@@ -82,7 +82,7 @@ struct BookThumbnailView: View {
         }
 
         let urls = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-        let thumbnailsDir = urls[0].appending(path: "com.anatol.bookreader/thumbnails", directoryHint: .isDirectory)
+        let thumbnailsDir = urls[0].appending(path: "com.anatol.Booklight/thumbnails", directoryHint: .isDirectory)
         let diskURL = thumbnailsDir.appending(path: "\(bookID).png")
 
         if let data = try? Data(contentsOf: diskURL), let uiImage = UIImage(data: data) {

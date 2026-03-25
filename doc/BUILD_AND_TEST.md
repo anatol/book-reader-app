@@ -1,6 +1,6 @@
 # Build And Test Guide
 
-This document explains how to build, run, and manually verify the `Book Reader` app.
+This document explains how to build, run, and manually verify the `Booklight` app.
 
 ## Platforms
 
@@ -28,17 +28,17 @@ Optional but useful:
 
 Important files:
 
-- [BookReader.xcodeproj](/Users/anatol/work/bachu/book-reader-app/BookReader.xcodeproj)
-- [BookReader/ContentView.swift](/Users/anatol/work/bachu/book-reader-app/BookReader/ContentView.swift)
-- [BookReader/LibraryController.swift](/Users/anatol/work/bachu/book-reader-app/BookReader/LibraryController.swift)
-- [BookReader/PDFReaderView.swift](/Users/anatol/work/bachu/book-reader-app/BookReader/PDFReaderView.swift)
-- [BookReader/EPUBReaderView.swift](/Users/anatol/work/bachu/book-reader-app/BookReader/EPUBReaderView.swift)
-- [BookReader/EPUBSupport.swift](/Users/anatol/work/bachu/book-reader-app/BookReader/EPUBSupport.swift)
+- [Booklight.xcodeproj](/Users/anatol/work/bachu/book-reader-app/Booklight.xcodeproj)
+- [Booklight/ContentView.swift](/Users/anatol/work/bachu/book-reader-app/Booklight/ContentView.swift)
+- [Booklight/LibraryController.swift](/Users/anatol/work/bachu/book-reader-app/Booklight/LibraryController.swift)
+- [Booklight/PDFReaderView.swift](/Users/anatol/work/bachu/book-reader-app/Booklight/PDFReaderView.swift)
+- [Booklight/EPUBReaderView.swift](/Users/anatol/work/bachu/book-reader-app/Booklight/EPUBReaderView.swift)
+- [Booklight/EPUBSupport.swift](/Users/anatol/work/bachu/book-reader-app/Booklight/EPUBSupport.swift)
 
 ## Open In Xcode
 
-1. Open [BookReader.xcodeproj](/Users/anatol/work/bachu/book-reader-app/BookReader.xcodeproj).
-2. Select the `BookReader` scheme.
+1. Open [Booklight.xcodeproj](/Users/anatol/work/bachu/book-reader-app/Booklight.xcodeproj).
+2. Select the `Booklight` scheme.
 3. Choose a run destination:
    - an iPhone simulator
    - an iPad simulator
@@ -57,17 +57,17 @@ This command was used successfully in this repository:
 SWIFT_MODULECACHE_PATH=/tmp/swift-module-cache \
 CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache \
 xcodebuild \
-  -project BookReader.xcodeproj \
-  -scheme BookReader \
+  -project Booklight.xcodeproj \
+  -scheme Booklight \
   -destination 'generic/platform=iOS' \
-  -derivedDataPath /tmp/BookReaderDerived \
+  -derivedDataPath /tmp/BooklightDerived \
   CODE_SIGNING_ALLOWED=NO \
   build
 ```
 
 Notes:
 
-- `-derivedDataPath /tmp/BookReaderDerived` avoids permissions problems in restricted environments.
+- `-derivedDataPath /tmp/BooklightDerived` avoids permissions problems in restricted environments.
 - `CODE_SIGNING_ALLOWED=NO` is useful for CI-like local verification when you only need to compile.
 
 ### Suggested Mac Catalyst Build
@@ -78,10 +78,10 @@ If you want to verify the macOS path explicitly, use:
 SWIFT_MODULECACHE_PATH=/tmp/swift-module-cache \
 CLANG_MODULE_CACHE_PATH=/tmp/clang-module-cache \
 xcodebuild \
-  -project BookReader.xcodeproj \
-  -scheme BookReader \
+  -project Booklight.xcodeproj \
+  -scheme Booklight \
   -destination 'generic/platform=macOS,variant=Mac Catalyst' \
-  -derivedDataPath /tmp/BookReaderDerived-catalyst \
+  -derivedDataPath /tmp/BooklightDerived-catalyst \
   CODE_SIGNING_ALLOWED=NO \
   build
 ```
@@ -244,7 +244,7 @@ Practical effect:
 Use a writable derived data path:
 
 ```bash
-xcodebuild ... -derivedDataPath /tmp/BookReaderDerived
+xcodebuild ... -derivedDataPath /tmp/BooklightDerived
 ```
 
 ### Build Fails Because of Code Signing
