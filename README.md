@@ -1,63 +1,68 @@
 # Booklight
 
-`Booklight` is a lightweight SwiftUI reading application for Apple platforms. It is designed around a user-selected folder that acts as the entire library, with book progress stored alongside the books so Syncthing can move state across devices.
+A light and fast book reader for iPad and Mac.
 
-## What It Does
+Booklight is a focused reading app that stays out of your way. It opens PDFs and EPUBs from your own folders, remembers where you left off, and seamlessly syncs your reading position across devices — no accounts, no cloud, no fuss.
 
-- **Active Book Tracking:** Reading progress and actively read books are copied to a single tracking directory (e.g. synced via Syncthing).
-- **Multiple Local Libraries:** Add many read-only "Local Library" folders that the app scans without modifying.
-- **Robust Book Deduplication:** Books are identified and deduplicated using content hashes (SHA-256), combining the tracking directory and local libraries.
-- **Efficient Caching:** Extracted artwork and computed file hashes are aggressively cached on disk (`~/Library/Caches`) to keep library scans instant.
-- **First-Class iPad/Mac UI:** Clean sidebar layouts, keyboard navigation, dark mode support.
-- **Privacy-First:** No analytics, no cloud accounts, no network calls. Works 100% offline.
-- Stores library metadata in `.book-app/` inside the selected folder.
-- Detects added and removed books during periodic rescans.
-- Merges progress by keeping the furthest reading position.
-- Supports fuzzy title search on the library screen.
+## Screenshots
 
-## Library Layout
+<!-- Replace these placeholders with actual screenshots -->
 
-The app expects a flat library directory:
+![Library view](doc/screenshots/library.png)
 
-```text
-<Library>/
-  Book 1.pdf
-  Book 2.epub
-  .book-app/
-    library.json
-    books/
-      <book-id>.json
+![Reader view](doc/screenshots/reader.png)
+
+![Active Books](doc/screenshots/active-books.png)
+
+## Features
+
+- **PDF and EPUB support** — read both formats with a clean, distraction-free interface
+- **Position tracking** — automatically saves your reading position in every book
+- **Cross-device sync** — share your reading progress between devices using Syncthing or any file-sync tool
+- **Privacy-first** — no analytics, no cloud accounts, no network calls; works 100% offline
+- **Fast library scanning** — artwork and file hashes are aggressively cached for instant startup
+- **Fuzzy search** — quickly find books by partial or approximate title matches
+
+## How It Works
+
+Booklight separates your full book collection from the small set of books you're actively reading.
+
+### Local Libraries
+
+Point the app at one or more folders containing your books. These are read-only scan sources — the app discovers books but never modifies your files. Your full collection can live on a large drive or NAS.
+
+### Active Books
+
+When you open a book, it becomes part of your **Active Books** set. Reading progress is stored in a small arbitrary tracking directory. Active books are ordered by most recently read, so you always see what you're currently working through.
+
+### Sharing and Sync
+
+The tracking directory can be shared **independently** from your full library. This is the key design: you can sync just your active books and their progress to a mobile device where storage is limited, while keeping the full collection on your desktop.
+
+Use [Syncthing](https://syncthing.net/) or any file-sync tool to share the tracking directory. When the same book is read on multiple devices, progress merges automatically — the furthest reading position wins.
+
+## Installation
+
+### macOS (Homebrew)
+
+```bash
+brew install anatol/tap/booklight
 ```
 
-- `library.json` tracks the discovered books in the folder.
-- `.book-app/books/*.json` stores per-book reading state.
-- These files are intended to sync via Syncthing with the rest of the library.
+### Build from Source
 
-## Project Layout
+See the [Development Guide](doc/DEVELOPMENT.md) for build instructions.
 
-```text
-Booklight.xcodeproj
-Booklight/
-  BooklightApp.swift
-  ContentView.swift
-  LibraryController.swift
-  Models.swift
-  ReaderContainerView.swift
-  PDFReaderView.swift
-  EPUBReaderView.swift
-  EPUBSupport.swift
-doc/
-  BUILD_AND_TEST.md
-```
+## Platforms
 
-## Core Design Notes
+- **iPad** — iPadOS 26+
+- **Mac** — macOS 26+ (via Mac Catalyst)
 
-- The app uses one SwiftUI target.
-- The iPhone/iPad build is primary; macOS is handled through Mac Catalyst.
-- `PDF` reading uses `PDFKit`.
-- `EPUB` reading uses a small built-in ZIP extractor plus `WKWebView`.
-- Sync is file-based JSON, not SQLite, to keep the data easy for Syncthing to replicate.
+## Privacy
 
-## Build And Test
+Booklight makes zero network calls. There are no analytics, no telemetry, no cloud accounts. All data stays on your device and in your folders.
 
-See [doc/BUILD_AND_TEST.md](/Users/anatol/work/bachu/book-reader-app/doc/BUILD_AND_TEST.md) for setup, build commands, manual test steps, and troubleshooting.
+## Links
+
+- [Development Guide](doc/DEVELOPMENT.md)
+- [Homebrew Tap](https://github.com/anatol/homebrew-tap)
