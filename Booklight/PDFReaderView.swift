@@ -102,7 +102,8 @@ final class PDFScrollProxy: ObservableObject {
     /// The match is centered vertically in the viewport.
     private func goToMatch(_ index: Int) {
         guard index >= 0, index < searchSelections.count,
-              let pdfView else { return }
+            let pdfView
+        else { return }
         searchCurrentIndex = index
         let selection = searchSelections[index]
         pdfView.setCurrentSelection(selection, animate: true)
@@ -117,8 +118,9 @@ final class PDFScrollProxy: ObservableObject {
             // PDFDestination uses PDF coordinates (origin at bottom-left, Y up).
             // bounds.origin.y is the bottom of the selection rect, so add height
             // to get the top of the selection in PDF coords.
-            let topOfSelection = CGPoint(x: bounds.origin.x,
-                                         y: bounds.origin.y + bounds.height)
+            let topOfSelection = CGPoint(
+                x: bounds.origin.x,
+                y: bounds.origin.y + bounds.height)
             let destination = PDFDestination(page: page, at: topOfSelection)
             pdfView.go(to: destination)
         }
@@ -303,9 +305,10 @@ struct PDFBookView: View {
         // the coordinator deduplicates unchanged positions, and the user may not
         // have scrolled since the last emit.
         if let pdfView = scrollProxy.pdfView,
-           let document = pdfView.document,
-           let destination = pdfView.currentDestination,
-           let page = destination.page {
+            let document = pdfView.document,
+            let destination = pdfView.currentDestination,
+            let page = destination.page
+        {
             let pageIndex = document.index(for: page)
             let pageCount = document.pageCount
             let pageHeight = page.bounds(for: .mediaBox).height
@@ -482,8 +485,9 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         /// destination point catches up, causing progress to jump back and forth.
         private func emitPosition() {
             guard let pdfView, let document = pdfView.document,
-                  let destination = pdfView.currentDestination,
-                  let page = destination.page else {
+                let destination = pdfView.currentDestination,
+                let page = destination.page
+            else {
                 return
             }
 

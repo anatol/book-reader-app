@@ -567,11 +567,13 @@ final class LibraryController: ObservableObject {
         func processDirectory(at url: URL) -> [(URL, BookFormat, Int64, Date, String, String)] {
             // Use enumerator instead of contentsOfDirectory to recursively
             // discover books in subdirectories (e.g. organized by author/genre)
-            guard let enumerator = fileManager.enumerator(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { return [] }
+            guard
+                let enumerator = fileManager.enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+            else { return [] }
 
             var results: [(URL, BookFormat, Int64, Date, String, String)] = []
 

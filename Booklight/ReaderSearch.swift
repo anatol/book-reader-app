@@ -41,14 +41,16 @@ struct ReaderSearchBar: View {
 
             // Only show match count after a search has been performed.
             if hasActiveSearch && !searchText.isEmpty {
-                Text(matchCount > 0
-                    ? "\(currentMatchIndex + 1) of \(matchCount)"
-                    : "No matches")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
+                Text(
+                    matchCount > 0
+                        ? "\(currentMatchIndex + 1) of \(matchCount)"
+                        : "No matches"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
             }
 
             Button {

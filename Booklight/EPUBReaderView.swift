@@ -71,7 +71,8 @@ final class EPUBScrollProxy: ObservableObject {
         lastSearchText = text
 
         // Escape single quotes and backslashes for safe JS string interpolation.
-        let escaped = text
+        let escaped =
+            text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "'", with: "\\'")
 
@@ -80,7 +81,8 @@ final class EPUBScrollProxy: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let dict = result as? [String: Any],
-                   let count = dict["count"] as? Int {
+                    let count = dict["count"] as? Int
+                {
                     self.searchMatchCount = count
                     self.searchCurrentIndex = count > 0 ? 0 : 0
                 } else {
@@ -424,7 +426,9 @@ private struct EPUBWebView: UIViewRepresentable {
     let onProgressChange: (Int, Double, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(document: document, initialFontSizePercent: initialFontSizePercent, onProgressChange: onProgressChange, onContentTapped: onContentTapped)
+        Coordinator(
+            document: document, initialFontSizePercent: initialFontSizePercent, onProgressChange: onProgressChange,
+            onContentTapped: onContentTapped)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -690,7 +694,10 @@ private struct EPUBWebView: UIViewRepresentable {
         /// Font size percentage to apply after document load (restored from saved state).
         private var initialFontSizePercent: Int
 
-        init(document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void, onContentTapped: @escaping () -> Void) {
+        init(
+            document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void,
+            onContentTapped: @escaping () -> Void
+        ) {
             self.document = document
             self.initialFontSizePercent = initialFontSizePercent
             self.onProgressChange = onProgressChange
