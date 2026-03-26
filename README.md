@@ -6,13 +6,9 @@ Booklight is a focused reading app that stays out of your way. It opens PDFs and
 
 ## Screenshots
 
-<!-- Replace these placeholders with actual screenshots -->
-
 ![Library view](doc/screenshots/library.png)
 
 ![Reader view](doc/screenshots/reader.png)
-
-![Active Books](doc/screenshots/active-books.png)
 
 ## Features
 
