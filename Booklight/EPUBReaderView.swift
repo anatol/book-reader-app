@@ -50,6 +50,13 @@ final class EPUBScrollProxy: ObservableObject {
         savedProgressJSON = nil
     }
 
+    /// Discards the saved position without restoring it.
+    /// Used when the user confirms they want to stay at the current location
+    /// (e.g. by clicking on the content during search).
+    func discardSavedPosition() {
+        savedProgressJSON = nil
+    }
+
     // MARK: - Search
 
     /// Performs a case-insensitive search in the EPUB content using injected JavaScript.
@@ -196,7 +203,15 @@ struct EPUBBookView: View {
                         document: document,
                         initialScrollTarget: initialScrollTarget,
                         scrollProxy: scrollProxy,
-                        initialFontSizePercent: scrollProxy.fontSizePercent
+                        initialFontSizePercent: scrollProxy.fontSizePercent,
+                        onContentTapped: {
+                            // Clicking content during search confirms the current
+                            // position as the new reading location.
+                            guard showSearch else { return }
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                confirmSearchPosition()
+                            }
+                        }
                     ) { chapterIndex, chapterProgress, overallProgress in
                         // Clamp values to valid ranges before persisting.
                         let clampedIndex = min(max(chapterIndex, 0), max(document.spine.count - 1, 0))
@@ -326,6 +341,21 @@ struct EPUBBookView: View {
         searchText = ""
     }
 
+    /// Confirms the current scroll position as the new reading location.
+    /// Called when the user clicks on content during search — hides the search bar,
+    /// clears highlights, but keeps the current position instead of restoring
+    /// the pre-search location. Triggers a progress report so the title and
+    /// saved position update immediately.
+    private func confirmSearchPosition() {
+        showSearch = false
+        scrollProxy.clearSearch()
+        scrollProxy.discardSavedPosition()
+        searchText = ""
+        // Force an immediate progress report so the title bar and persisted
+        // position reflect the newly confirmed reading location.
+        scrollProxy.webView?.evaluateJavaScript("sendProgress();")
+    }
+
     private func loadDocument() async {
         isPreparing = true
         loadError = nil
@@ -388,17 +418,20 @@ private struct EPUBWebView: UIViewRepresentable {
     let scrollProxy: EPUBScrollProxy
     /// Initial font size percentage to apply after the document loads.
     let initialFontSizePercent: Int
+    /// Called when the user clicks/taps on the content area (not text selection).
+    let onContentTapped: () -> Void
     /// Called with (chapterIndex, chapterProgress, overallProgress) as the user scrolls.
     let onProgressChange: (Int, Double, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(document: document, initialFontSizePercent: initialFontSizePercent, onProgressChange: onProgressChange)
+        Coordinator(document: document, initialFontSizePercent: initialFontSizePercent, onProgressChange: onProgressChange, onContentTapped: onContentTapped)
     }
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         let contentController = WKUserContentController()
         contentController.add(context.coordinator, name: "readerProgress")
+        contentController.add(context.coordinator, name: "contentTapped")
         // Inject search functionality (must run before scroll tracking so it's
         // available when the page loads, but after the DOM is ready).
         contentController.addUserScript(
@@ -428,6 +461,7 @@ private struct EPUBWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.document = document
         context.coordinator.onProgressChange = onProgressChange
+        context.coordinator.onContentTapped = onContentTapped
         scrollProxy.webView = webView
         context.coordinator.loadCombinedDocument(scrollTarget: initialScrollTarget)
     }
@@ -630,6 +664,14 @@ private struct EPUBWebView: UIViewRepresentable {
             }
             sendProgress();
         }, 80));
+
+        // Notify native code when user clicks on content (not a text drag/selection).
+        // Used to confirm the current position as the new reading location during search.
+        document.addEventListener('click', function() {
+            var sel = window.getSelection();
+            if (sel && sel.toString().length > 0) return;
+            window.webkit.messageHandlers.contentTapped.postMessage({});
+        });
         """
 
     // MARK: - Coordinator
@@ -637,6 +679,8 @@ private struct EPUBWebView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var document: EPUBDocument
         var onProgressChange: (Int, Double, Double) -> Void
+        /// Called when the user clicks/taps on the EPUB content area.
+        var onContentTapped: () -> Void
 
         private weak var webView: WKWebView?
         /// Tracks whether the combined document has been loaded to avoid redundant loads.
@@ -646,10 +690,11 @@ private struct EPUBWebView: UIViewRepresentable {
         /// Font size percentage to apply after document load (restored from saved state).
         private var initialFontSizePercent: Int
 
-        init(document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void) {
+        init(document: EPUBDocument, initialFontSizePercent: Int, onProgressChange: @escaping (Int, Double, Double) -> Void, onContentTapped: @escaping () -> Void) {
             self.document = document
             self.initialFontSizePercent = initialFontSizePercent
             self.onProgressChange = onProgressChange
+            self.onContentTapped = onContentTapped
         }
 
         func attach(_ webView: WKWebView) {
@@ -733,6 +778,11 @@ private struct EPUBWebView: UIViewRepresentable {
             _ userContentController: WKUserContentController,
             didReceive message: WKScriptMessage
         ) {
+            if message.name == "contentTapped" {
+                onContentTapped()
+                return
+            }
+
             guard message.name == "readerProgress",
                 let body = message.body as? [String: Any],
                 let chapterIndex = body["chapterIndex"] as? Int,

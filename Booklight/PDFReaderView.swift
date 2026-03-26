@@ -37,6 +37,13 @@ final class PDFScrollProxy: ObservableObject {
         savedDestination = nil
     }
 
+    /// Discards the saved position without restoring it.
+    /// Used when the user confirms they want to stay at the current location
+    /// (e.g. by clicking on the content during search).
+    func discardSavedPosition() {
+        savedDestination = nil
+    }
+
     // MARK: - Search
 
     /// Performs a case-insensitive search across the entire PDF document.
@@ -174,7 +181,15 @@ struct PDFBookView: View {
                 documentURL: bookURL,
                 initialPageIndex: book.progressState?.pdfPageIndex ?? 0,
                 initialPageOffsetY: book.progressState?.pdfPageOffsetY ?? 0,
-                scrollProxy: scrollProxy
+                scrollProxy: scrollProxy,
+                onContentTapped: {
+                    // Clicking content during search confirms the current
+                    // position as the new reading location.
+                    guard showSearch else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        confirmSearchPosition()
+                    }
+                }
             ) { pageIndex, pageCount, pageOffsetY in
                 controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: pageOffsetY)
                 // Update title progress only when not searching, so the title
@@ -273,6 +288,37 @@ struct PDFBookView: View {
         // but clear the local binding.
         searchText = ""
     }
+
+    /// Confirms the current scroll position as the new reading location.
+    /// Called when the user clicks on content during search — hides the search bar,
+    /// clears highlights, but keeps the current position instead of restoring
+    /// the pre-search location.
+    private func confirmSearchPosition() {
+        showSearch = false
+        scrollProxy.clearSearch()
+        scrollProxy.discardSavedPosition()
+        searchText = ""
+        // Directly compute and set the title progress from the current PDFView
+        // position. We can't rely on the debounced position notification because
+        // the coordinator deduplicates unchanged positions, and the user may not
+        // have scrolled since the last emit.
+        if let pdfView = scrollProxy.pdfView,
+           let document = pdfView.document,
+           let destination = pdfView.currentDestination,
+           let page = destination.page {
+            let pageIndex = document.index(for: page)
+            let pageCount = document.pageCount
+            let pageHeight = page.bounds(for: .mediaBox).height
+            let offsetY = pageHeight > 0 ? min(max(1.0 - (destination.point.y / pageHeight), 0), 1) : 0.0
+
+            controller.savePDFPosition(for: book, pageIndex: pageIndex, pageCount: pageCount, pageOffsetY: offsetY)
+
+            let safeCount = max(pageCount, 1)
+            let safeIndex = min(max(pageIndex, 0), safeCount - 1)
+            let progress = safeCount == 1 ? 1.0 : (Double(safeIndex) + offsetY) / Double(max(safeCount - 1, 1))
+            controller.openBookProgress = progress.clampedToUnit
+        }
+    }
 }
 
 struct PDFReaderRepresentable: UIViewRepresentable {
@@ -281,11 +327,13 @@ struct PDFReaderRepresentable: UIViewRepresentable {
     /// Normalized Y offset within the initial page (0 = top, 1 = bottom).
     let initialPageOffsetY: Double
     let scrollProxy: PDFScrollProxy
+    /// Called when the user taps on the PDF content area.
+    let onContentTapped: () -> Void
     /// Callback: (pageIndex, pageCount, normalizedPageOffsetY)
     let onPositionChange: (Int, Int, Double) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onPositionChange: onPositionChange)
+        Coordinator(onPositionChange: onPositionChange, onContentTapped: onContentTapped)
     }
 
     func makeUIView(context: Context) -> PDFView {
@@ -297,6 +345,11 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         pdfView.backgroundColor = .secondarySystemBackground
         // Wire up the scroll proxy so SwiftUI key events can drive scrolling.
         scrollProxy.pdfView = pdfView
+        // Tap gesture to detect content clicks (used to confirm search position).
+        // cancelsTouchesInView=false so it doesn't interfere with text selection or links.
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleContentTap))
+        tapGesture.cancelsTouchesInView = false
+        pdfView.addGestureRecognizer(tapGesture)
         context.coordinator.install(
             documentURL: documentURL,
             initialPageIndex: initialPageIndex,
@@ -308,6 +361,7 @@ struct PDFReaderRepresentable: UIViewRepresentable {
 
     func updateUIView(_ pdfView: PDFView, context: Context) {
         context.coordinator.onPositionChange = onPositionChange
+        context.coordinator.onContentTapped = onContentTapped
         scrollProxy.pdfView = pdfView
         context.coordinator.install(
             documentURL: documentURL,
@@ -320,6 +374,8 @@ struct PDFReaderRepresentable: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject {
         var onPositionChange: (Int, Int, Double) -> Void
+        /// Called when the user taps on the PDF content area.
+        var onContentTapped: () -> Void
 
         private weak var pdfView: PDFView?
         private var currentDocumentURL: URL?
@@ -333,8 +389,14 @@ struct PDFReaderRepresentable: UIViewRepresentable {
         private var scrollDebounceTimer: Timer?
         private static let scrollDebounceInterval: TimeInterval = 0.5
 
-        init(onPositionChange: @escaping (Int, Int, Double) -> Void) {
+        init(onPositionChange: @escaping (Int, Int, Double) -> Void, onContentTapped: @escaping () -> Void) {
             self.onPositionChange = onPositionChange
+            self.onContentTapped = onContentTapped
+        }
+
+        /// Handles tap gesture on the PDF content area.
+        @objc func handleContentTap() {
+            onContentTapped()
         }
 
         func install(documentURL: URL, initialPageIndex: Int, initialPageOffsetY: Double, in pdfView: PDFView) {
