@@ -1,4 +1,3 @@
-import Combine
 import CryptoKit
 import Foundation
 import SwiftUI
@@ -12,7 +11,11 @@ final class LibraryController: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var lastScanAt: Date?
     @Published var isPickingTrackingDirectory = false
-    @Published var searchText = ""
+    @Published var searchText = "" {
+        didSet {
+            scheduleSearchDebounce()
+        }
+    }
     @Published private(set) var debouncedSearchText = ""
     @Published var errorMessage: String?
 
@@ -28,12 +31,11 @@ final class LibraryController: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
+    private var searchDebounceTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
 
     private var scopedTrackingDirectoryURL: URL?
     private var scopedLocalLibraries: [URL] = []
-
-    private nonisolated(unsafe) var searchDebounceSubscription: AnyCancellable?
 
     #if targetEnvironment(macCatalyst)
         private let bookmarkCreationOptions: URL.BookmarkCreationOptions = [.withSecurityScope]
@@ -46,19 +48,13 @@ final class LibraryController: ObservableObject {
     init() {
         restoreLibraries()
         startPolling()
-
-        searchDebounceSubscription =
-            $searchText
-            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
-            .removeDuplicates()
-            .assign(to: \.debouncedSearchText, on: self)
     }
 
     deinit {
         refreshTask?.cancel()
         pollTask?.cancel()
+        searchDebounceTask?.cancel()
         writeTasks.values.forEach { $0.cancel() }
-        searchDebounceSubscription?.cancel()
         scopedTrackingDirectoryURL?.stopAccessingSecurityScopedResource()
         scopedLocalLibraries.forEach { $0.stopAccessingSecurityScopedResource() }
     }
@@ -206,6 +202,19 @@ final class LibraryController: ObservableObject {
         try? FileManager.default.removeItem(at: stateDirectory.appending(path: "\(book.id).json"))
 
         refresh(silently: true)
+    }
+
+    private func scheduleSearchDebounce() {
+        searchDebounceTask?.cancel()
+
+        let query = searchText
+        searchDebounceTask = Task { [weak self, query] in
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled else { return }
+            guard let self else { return }
+            guard self.debouncedSearchText != query else { return }
+            self.debouncedSearchText = query
+        }
     }
 
     func refresh(silently: Bool = false) {
