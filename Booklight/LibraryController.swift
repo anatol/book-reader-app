@@ -4,6 +4,46 @@ import SwiftUI
 
 @MainActor
 final class LibraryController: ObservableObject {
+    enum OtherBooksSortOption: String, CaseIterable, Identifiable {
+        case title
+        case modifiedAt
+        case lastOpenedAt
+        case fileSize
+        case format
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .title:
+                return "Name"
+            case .modifiedAt:
+                return "Modification Time"
+            case .lastOpenedAt:
+                return "Last Opened"
+            case .fileSize:
+                return "File Size"
+            case .format:
+                return "Format"
+            }
+        }
+
+        var shortLabel: String {
+            switch self {
+            case .title:
+                return "Name"
+            case .modifiedAt:
+                return "Modified"
+            case .lastOpenedAt:
+                return "Opened"
+            case .fileSize:
+                return "Size"
+            case .format:
+                return "Format"
+            }
+        }
+    }
+
     private struct ResolvedScopedURL {
         let scopedURL: URL
         let bookmarkData: Data
@@ -26,6 +66,12 @@ final class LibraryController: ObservableObject {
         }
     }
     @Published private(set) var debouncedSearchText = ""
+    @Published var otherBooksSort: OtherBooksSortOption = .title {
+        didSet {
+            guard oldValue != otherBooksSort else { return }
+            defaults.set(otherBooksSort.rawValue, forKey: otherBooksSortKey)
+        }
+    }
     @Published var errorMessage: String?
 
     /// Set by ReaderContainerView when a book is open; used by ContentView to update the window title.
@@ -36,6 +82,7 @@ final class LibraryController: ObservableObject {
 
     private let trackingBookmarkKey = "Booklight.trackingDirectoryBookmark"
     private let localLibrariesKey = "Booklight.localLibrariesBookmarks"
+    private let otherBooksSortKey = "Booklight.otherBooksSort"
     private let defaults = UserDefaults.standard
 
     private var refreshTask: Task<Void, Never>?
@@ -55,6 +102,11 @@ final class LibraryController: ObservableObject {
     #endif
 
     init() {
+        if let storedSort = defaults.string(forKey: otherBooksSortKey),
+            let sort = OtherBooksSortOption(rawValue: storedSort)
+        {
+            otherBooksSort = sort
+        }
         restoreLibraries()
         startPolling()
     }
@@ -79,16 +131,11 @@ final class LibraryController: ObservableObject {
     }
 
     var otherBooks: [Book] {
-        visibleBooks(from: books)
-            .filter { !$0.isActive }
-            .sorted {
-                let leftScore = fuzzyScore(for: $0)
-                let rightScore = fuzzyScore(for: $1)
-                if leftScore != rightScore {
-                    return leftScore > rightScore
-                }
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
+        Self.sortOtherBooks(
+            visibleBooks(from: books).filter { !$0.isActive },
+            using: otherBooksSort,
+            query: debouncedSearchText
+        )
     }
 
     private func visibleBooks(from source: [Book]) -> [Book] {
@@ -116,7 +163,7 @@ final class LibraryController: ObservableObject {
         Self.normalized(debouncedSearchText)
     }
 
-    private static func normalized(_ value: String) -> String {
+    private nonisolated static func normalized(_ value: String) -> String {
         value
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
             .lowercased()
@@ -124,7 +171,7 @@ final class LibraryController: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func fuzzyScore(query: String, candidate: String) -> Int? {
+    private nonisolated static func fuzzyScore(query: String, candidate: String) -> Int? {
         let normalizedCandidate = normalized(candidate)
         guard !query.isEmpty, !normalizedCandidate.isEmpty else {
             return query.isEmpty ? 0 : nil
@@ -157,6 +204,61 @@ final class LibraryController: ObservableObject {
             score += max(1, 24 - gapPenalty)
         }
         return score
+    }
+
+    nonisolated static func sortOtherBooks(_ books: [Book], using option: OtherBooksSortOption, query: String = "") -> [Book] {
+        let normalizedQuery = normalized(query)
+
+        return books.sorted { left, right in
+            if !normalizedQuery.isEmpty {
+                let leftScore = fuzzyScore(query: normalizedQuery, candidate: left.title) ?? Int.min
+                let rightScore = fuzzyScore(query: normalizedQuery, candidate: right.title) ?? Int.min
+                if leftScore != rightScore {
+                    return leftScore > rightScore
+                }
+            }
+
+            return compareOtherBooks(left, right, using: option)
+        }
+    }
+
+    private nonisolated static func compareOtherBooks(_ left: Book, _ right: Book, using option: OtherBooksSortOption) -> Bool {
+        switch option {
+        case .title:
+            return compareTitles(left, right)
+
+        case .modifiedAt:
+            if left.modifiedAt != right.modifiedAt {
+                return left.modifiedAt > right.modifiedAt
+            }
+
+        case .lastOpenedAt:
+            let leftOpenedAt = left.lastOpenedAt ?? .distantPast
+            let rightOpenedAt = right.lastOpenedAt ?? .distantPast
+            if leftOpenedAt != rightOpenedAt {
+                return leftOpenedAt > rightOpenedAt
+            }
+
+        case .fileSize:
+            if left.fileSize != right.fileSize {
+                return left.fileSize > right.fileSize
+            }
+
+        case .format:
+            if left.format != right.format {
+                return left.format.rawValue.localizedCaseInsensitiveCompare(right.format.rawValue) == .orderedAscending
+            }
+        }
+
+        return compareTitles(left, right)
+    }
+
+    private nonisolated static func compareTitles(_ left: Book, _ right: Book) -> Bool {
+        let titleOrder = left.title.localizedCaseInsensitiveCompare(right.title)
+        if titleOrder != .orderedSame {
+            return titleOrder == .orderedAscending
+        }
+        return left.id < right.id
     }
 
     func handlePickedTrackingDirectory(_ result: Result<URL, Error>) {

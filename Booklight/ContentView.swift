@@ -199,8 +199,25 @@ private struct BookGallerySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            //            Text(title)
-            //                .font(.title3.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+
+                Spacer(minLength: 12)
+
+                if !isActiveSection {
+                    Menu {
+                        Picker("Sort by", selection: $controller.otherBooksSort) {
+                            ForEach(LibraryController.OtherBooksSortOption.allCases) { option in
+                                Text(option.title).tag(option)
+                            }
+                        }
+                    } label: {
+                        Label("Sort: \(controller.otherBooksSort.shortLabel)", systemImage: "arrow.up.arrow.down.circle")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+            }
 
             LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
                 ForEach(books) { book in
