@@ -89,6 +89,7 @@ final class LibraryController: ObservableObject {
     private var pollTask: Task<Void, Never>?
     private var searchDebounceTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
+    private var writeTaskIDs: [String: UUID] = [:]
 
     private var scopedTrackingDirectoryURL: URL?
     private var scopedLocalLibraries: [URL] = []
@@ -523,7 +524,17 @@ final class LibraryController: ObservableObject {
         let bookID = proposedState.bookID
 
         writeTasks[bookID]?.cancel()
-        writeTasks[bookID] = Task { [weak self, trackingDirectoryURL] in
+        let taskID = UUID()
+        writeTaskIDs[bookID] = taskID
+        writeTasks[bookID] = Task { [weak self, trackingDirectoryURL, taskID] in
+            defer {
+                Task { @MainActor [weak self, taskID] in
+                    guard self?.writeTaskIDs[bookID] == taskID else { return }
+                    self?.writeTaskIDs[bookID] = nil
+                    self?.writeTasks[bookID] = nil
+                }
+            }
+
             do {
                 try await Task.sleep(for: .milliseconds(350))
                 try await Task.detached(priority: .utility) {
@@ -535,10 +546,6 @@ final class LibraryController: ObservableObject {
                 await MainActor.run {
                     self?.errorMessage = error.localizedDescription
                 }
-            }
-
-            await MainActor.run {
-                self?.writeTasks[bookID] = nil
             }
         }
     }
@@ -644,103 +651,83 @@ final class LibraryController: ObservableObject {
 
         let progressStates = try loadStates(from: stateDirectory)
         var hashCache = loadHashCache()
+        var seenCachePaths = Set<String>()
+        seenCachePaths.reserveCapacity(hashCache.records.count)
+        var generatedBooks: [Book] = []
+        var seenHashes = Set<String>()
         var cacheUpdated = false
 
-        // Helper to scan a directory and yield (URL, format, fileSize, modifiedAt, hash)
-        func processDirectory(at url: URL) -> [(URL, BookFormat, Int64, Date, String, String)] {
-            // Use enumerator instead of contentsOfDirectory to recursively
-            // discover books in subdirectories (e.g. organized by author/genre)
+        func processDirectory(at url: URL) {
             guard
                 let enumerator = fileManager.enumerator(
                     at: url,
                     includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey],
                     options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 )
-            else { return [] }
-
-            var results: [(URL, BookFormat, Int64, Date, String, String)] = []
+            else { return }
 
             for case let fileURL as URL in enumerator {
-                guard let format = BookFormat(url: fileURL) else { continue }
-                guard let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
-                    values.isRegularFile == true,
-                    let modifiedAt = values.contentModificationDate,
-                    let fileSizeVal = values.fileSize
-                else { continue }
-                let fileSize = Int64(fileSizeVal)
+                autoreleasepool {
+                    guard let format = BookFormat(url: fileURL) else { return }
+                    guard
+                        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
+                        values.isRegularFile == true,
+                        let modifiedAt = values.contentModificationDate,
+                        let fileSizeVal = values.fileSize
+                    else { return }
 
-                let pathKey = fileURL.path()
-                let hash: String
+                    let fileSize = Int64(fileSizeVal)
+                    let pathKey = fileURL.path()
+                    seenCachePaths.insert(pathKey)
 
-                if let record = hashCache.records[pathKey], record.fileSize == fileSize,
-                    abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0
-                {
-                    hash = record.contentHash
-                } else {
-                    guard let newHash = try? calculateHash(fileURL: fileURL) else { continue }
-                    hash = newHash
-                    hashCache.records[pathKey] = FileHashRecord(
-                        path: pathKey, fileSize: fileSize, modifiedAt: modifiedAt, contentHash: hash)
-                    cacheUpdated = true
+                    let hash: String
+                    if let record = hashCache.records[pathKey], record.fileSize == fileSize,
+                        abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0
+                    {
+                        hash = record.contentHash
+                    } else {
+                        guard let newHash = try? calculateHash(fileURL: fileURL) else { return }
+                        hash = newHash
+                        hashCache.records[pathKey] = FileHashRecord(
+                            path: pathKey,
+                            fileSize: fileSize,
+                            modifiedAt: modifiedAt,
+                            contentHash: hash
+                        )
+                        cacheUpdated = true
+                    }
+
+                    guard !seenHashes.contains(hash) else { return }
+                    seenHashes.insert(hash)
+
+                    generatedBooks.append(
+                        Book(
+                            id: hash,
+                            title: fileURL.deletingPathExtension().lastPathComponent,
+                            fileURL: fileURL,
+                            format: format,
+                            fileSize: fileSize,
+                            addedAt: modifiedAt,
+                            modifiedAt: modifiedAt,
+                            progressState: progressStates[hash]
+                        )
+                    )
                 }
-
-                results.append((fileURL, format, fileSize, modifiedAt, hash, fileURL.deletingPathExtension().lastPathComponent))
             }
-            return results
         }
 
-        // 1. Scan Tracking Directory
-        let trackedBooks = processDirectory(at: trackingBooksDirectory)
-
-        // 2. Scan Local Libraries
-        var localBooks: [(URL, BookFormat, Int64, Date, String, String)] = []
+        processDirectory(at: trackingBooksDirectory)
         for lib in localLibraries {
-            localBooks.append(contentsOf: processDirectory(at: lib))
+            processDirectory(at: lib)
         }
 
+        let cachedPaths = Array(hashCache.records.keys)
+        for path in cachedPaths where !seenCachePaths.contains(path) {
+            hashCache.records.removeValue(forKey: path)
+            cacheUpdated = true
+        }
         if cacheUpdated {
             saveHashCache(hashCache)
-        }
-
-        var generatedBooks: [Book] = []
-        var seenHashes = Set<String>()
-
-        // Process tracked books first to ensure they are the authoritative copy if duplicated
-        for (fileURL, format, fileSize, modifiedAt, hash, title) in trackedBooks {
-            guard !seenHashes.contains(hash) else { continue }
-            seenHashes.insert(hash)
-
-            let state = progressStates[hash]
-            let book = Book(
-                id: hash,
-                title: title,
-                fileURL: fileURL,
-                format: format,
-                fileSize: fileSize,
-                addedAt: modifiedAt,  // Just use modifiedAt as addedAt for tracked copies
-                modifiedAt: modifiedAt,
-                progressState: state
-            )
-            generatedBooks.append(book)
-        }
-
-        // Process local books
-        for (fileURL, format, fileSize, modifiedAt, hash, title) in localBooks {
-            guard !seenHashes.contains(hash) else { continue }
-            seenHashes.insert(hash)
-
-            let state = progressStates[hash]
-            let book = Book(
-                id: hash,
-                title: title,
-                fileURL: fileURL,
-                format: format,
-                fileSize: fileSize,
-                addedAt: modifiedAt,
-                modifiedAt: modifiedAt,
-                progressState: state
-            )
-            generatedBooks.append(book)
         }
 
         generatedBooks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
