@@ -76,7 +76,7 @@ struct Book: Identifiable, Hashable, Sendable {
     }
 
     var isActive: Bool {
-        progress > 0 && !isFinished
+        progress > 0
     }
 
     var lastOpenedAt: Date? {
