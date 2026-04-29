@@ -125,7 +125,12 @@ final class LibraryController: ObservableObject {
         visibleBooks(from: books)
             .filter(\.isActive)
             .sorted {
-                ($0.lastOpenedAt ?? .distantPast, fuzzyScore(for: $0), $0.title.localizedLowercase) > (
+                let leftUnread = $0.isUnreadLike
+                let rightUnread = $1.isUnreadLike
+                if leftUnread != rightUnread {
+                    return !leftUnread && rightUnread
+                }
+                return ($0.lastOpenedAt ?? .distantPast, fuzzyScore(for: $0), $0.title.localizedLowercase) > (
                     $1.lastOpenedAt ?? .distantPast, fuzzyScore(for: $1), $1.title.localizedLowercase
                 )
             }

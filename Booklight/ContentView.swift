@@ -260,7 +260,7 @@ private struct BookCard: View {
                 if book.isFinished {
                     statusBadge("Finished", tint: .green)
                         .padding(10)
-                } else if book.progress > 0 {
+                } else if !book.isUnreadLike {
                     statusBadge("\(Int((book.progress * 100).rounded()))%", tint: .accentColor)
                         .padding(10)
                 }
@@ -273,14 +273,14 @@ private struct BookCard: View {
 
                 HStack(spacing: 8) {
                     Text(book.displaySubtitle)
-                    if !book.isFinished && book.progress == 0 {
+                    if book.isUnreadLike {
                         Text("Unread")
                     }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                if book.progress > 0 && !book.isFinished {
+                if !book.isUnreadLike && !book.isFinished {
                     ProgressView(value: book.progress)
                         .progressViewStyle(.linear)
                 }

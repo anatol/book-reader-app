@@ -58,6 +58,8 @@ struct BookProgressState: Codable, Hashable, Sendable {
 }
 
 struct Book: Identifiable, Hashable, Sendable {
+    static let unreadProgressThreshold = 0.01
+
     var id: String
     var title: String
     var fileURL: URL
@@ -76,7 +78,12 @@ struct Book: Identifiable, Hashable, Sendable {
     }
 
     var isActive: Bool {
-        progress > 0
+        progressState != nil
+    }
+
+    var isUnreadLike: Bool {
+        guard progressState != nil else { return false }
+        return !isFinished && progress <= Self.unreadProgressThreshold
     }
 
     var lastOpenedAt: Date? {
