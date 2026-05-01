@@ -167,6 +167,12 @@ final class PDFScrollProxy: ObservableObject {
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: newY), animated: true)
     }
 
+    /// Jump back to the previous PDF navigation destination (e.g. after links/find jumps).
+    func jumpBack() {
+        guard let pdfView, pdfView.canGoBack else { return }
+        pdfView.goBack(nil)
+    }
+
     /// PDFView embeds a UIScrollView as a subview; find it by traversal.
     private func findScrollView() -> UIScrollView? {
         guard let pdfView else { return nil }
@@ -258,6 +264,21 @@ struct PDFBookView: View {
                 EmptyView()
             }
             .keyboardShortcut("f", modifiers: .command)
+            .hidden()
+            // Standard back-navigation shortcuts.
+            Button {
+                scrollProxy.jumpBack()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .hidden()
+            Button {
+                scrollProxy.jumpBack()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut(.leftArrow, modifiers: .command)
             .hidden()
         }
         .focusable()

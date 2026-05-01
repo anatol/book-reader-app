@@ -133,6 +133,12 @@ final class EPUBScrollProxy: ObservableObject {
         webView?.evaluateJavaScript("window.scrollBy(0, -window.innerHeight * 0.9)")
     }
 
+    /// Jump back to the previous web navigation state when available.
+    func jumpBack() {
+        guard let webView, webView.canGoBack else { return }
+        webView.goBack()
+    }
+
     // MARK: - Font size
 
     /// Increase font size by one step (10%), capped at 200%.
@@ -282,6 +288,21 @@ struct EPUBBookView: View {
                 EmptyView()
             }
             .keyboardShortcut("f", modifiers: .command)
+            .hidden()
+            // Standard back-navigation shortcuts.
+            Button {
+                scrollProxy.jumpBack()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut("[", modifiers: .command)
+            .hidden()
+            Button {
+                scrollProxy.jumpBack()
+            } label: {
+                EmptyView()
+            }
+            .keyboardShortcut(.leftArrow, modifiers: .command)
             .hidden()
         }
         .focusable()
