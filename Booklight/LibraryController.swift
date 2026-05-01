@@ -327,7 +327,6 @@ final class LibraryController: ObservableObject {
                 updatedAt: .now,
                 lastOpenedAt: .now,
                 progress: 0,
-                isFinished: false,
                 pdfPageIndex: nil,
                 pdfPageCount: nil,
                 epubChapterIndex: nil,
@@ -337,7 +336,6 @@ final class LibraryController: ObservableObject {
 
         state.updatedAt = .now
         state.progress = 0
-        state.isFinished = false
         state.pdfPageIndex = 0
         state.pdfPageCount = nil
         state.pdfPageOffsetY = 0
@@ -478,7 +476,6 @@ final class LibraryController: ObservableObject {
                     updatedAt: .now,
                     lastOpenedAt: .now,
                     progress: 0,
-                    isFinished: false,
                     pdfPageIndex: nil,
                     pdfPageCount: nil,
                     epubChapterIndex: nil,
@@ -946,8 +943,6 @@ final class LibraryController: ObservableObject {
         var merged = selected
         merged.lastOpenedAt = [normalizedLocal.lastOpenedAt, normalizedRemote.lastOpenedAt].compactMap { $0 }.max()
         merged.updatedAt = max(normalizedLocal.updatedAt, normalizedRemote.updatedAt)
-        merged.isFinished = normalizedLocal.isFinished || normalizedRemote.isFinished || merged.progress >= 0.999
-
         if normalizedLocal.epubFontSizePercent != nil && normalizedRemote.epubFontSizePercent != nil {
             merged.epubFontSizePercent =
                 normalizedLocal.updatedAt >= normalizedRemote.updatedAt

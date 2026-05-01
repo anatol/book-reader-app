@@ -31,7 +31,6 @@ struct BookProgressState: Codable, Hashable, Sendable {
     var updatedAt: Date
     var lastOpenedAt: Date?
     var progress: Double
-    var isFinished: Bool
     var pdfPageIndex: Int?
     var pdfPageCount: Int?
     /// Normalized Y offset within the current page (0.0 = top, 1.0 = bottom).
@@ -44,6 +43,89 @@ struct BookProgressState: Codable, Hashable, Sendable {
     /// nil means use the default size (100%).
     var epubFontSizePercent: Int?
 
+    /// Completion is derived from current position rather than persisted as sticky state.
+    var isFinished: Bool {
+        progress >= 0.999
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case bookID
+        case updatedAt
+        case lastOpenedAt
+        case progress
+        case isFinished
+        case pdfPageIndex
+        case pdfPageCount
+        case pdfPageOffsetY
+        case epubChapterIndex
+        case epubChapterPath
+        case epubChapterProgress
+        case epubFontSizePercent
+    }
+
+    init(
+        schemaVersion: Int = 1,
+        bookID: String,
+        updatedAt: Date,
+        lastOpenedAt: Date?,
+        progress: Double,
+        pdfPageIndex: Int?,
+        pdfPageCount: Int?,
+        pdfPageOffsetY: Double? = nil,
+        epubChapterIndex: Int?,
+        epubChapterPath: String?,
+        epubChapterProgress: Double?,
+        epubFontSizePercent: Int? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.bookID = bookID
+        self.updatedAt = updatedAt
+        self.lastOpenedAt = lastOpenedAt
+        self.progress = progress
+        self.pdfPageIndex = pdfPageIndex
+        self.pdfPageCount = pdfPageCount
+        self.pdfPageOffsetY = pdfPageOffsetY
+        self.epubChapterIndex = epubChapterIndex
+        self.epubChapterPath = epubChapterPath
+        self.epubChapterProgress = epubChapterProgress
+        self.epubFontSizePercent = epubFontSizePercent
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        bookID = try container.decode(String.self, forKey: .bookID)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        lastOpenedAt = try container.decodeIfPresent(Date.self, forKey: .lastOpenedAt)
+        progress = try container.decode(Double.self, forKey: .progress)
+        pdfPageIndex = try container.decodeIfPresent(Int.self, forKey: .pdfPageIndex)
+        pdfPageCount = try container.decodeIfPresent(Int.self, forKey: .pdfPageCount)
+        pdfPageOffsetY = try container.decodeIfPresent(Double.self, forKey: .pdfPageOffsetY)
+        epubChapterIndex = try container.decodeIfPresent(Int.self, forKey: .epubChapterIndex)
+        epubChapterPath = try container.decodeIfPresent(String.self, forKey: .epubChapterPath)
+        epubChapterProgress = try container.decodeIfPresent(Double.self, forKey: .epubChapterProgress)
+        epubFontSizePercent = try container.decodeIfPresent(Int.self, forKey: .epubFontSizePercent)
+        // Intentionally ignore legacy persisted `isFinished`; completion is position-derived.
+        _ = try container.decodeIfPresent(Bool.self, forKey: .isFinished)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(bookID, forKey: .bookID)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        try container.encodeIfPresent(lastOpenedAt, forKey: .lastOpenedAt)
+        try container.encode(progress, forKey: .progress)
+        try container.encodeIfPresent(pdfPageIndex, forKey: .pdfPageIndex)
+        try container.encodeIfPresent(pdfPageCount, forKey: .pdfPageCount)
+        try container.encodeIfPresent(pdfPageOffsetY, forKey: .pdfPageOffsetY)
+        try container.encodeIfPresent(epubChapterIndex, forKey: .epubChapterIndex)
+        try container.encodeIfPresent(epubChapterPath, forKey: .epubChapterPath)
+        try container.encodeIfPresent(epubChapterProgress, forKey: .epubChapterProgress)
+        try container.encodeIfPresent(epubFontSizePercent, forKey: .epubFontSizePercent)
+    }
+
     func normalized() -> BookProgressState {
         var copy = self
         copy.progress = progress.clampedToUnit
@@ -51,7 +133,6 @@ struct BookProgressState: Codable, Hashable, Sendable {
         copy.epubChapterProgress = epubChapterProgress?.clampedToUnit
         if copy.progress >= 0.999 {
             copy.progress = 1
-            copy.isFinished = true
         }
         return copy
     }
@@ -141,7 +222,6 @@ extension BookProgressState {
             updatedAt: .now,
             lastOpenedAt: lastOpenedAt,
             progress: readingPosition.progress,
-            isFinished: readingPosition.progress >= 0.999,
             pdfPageIndex: readingPosition.pageIndex,
             pdfPageCount: readingPosition.pageCount,
             pdfPageOffsetY: readingPosition.pageOffsetY,
@@ -165,7 +245,6 @@ extension BookProgressState {
             updatedAt: .now,
             lastOpenedAt: lastOpenedAt,
             progress: overallProgress.clampedToUnit,
-            isFinished: overallProgress >= 0.999,
             pdfPageIndex: nil,
             pdfPageCount: nil,
             epubChapterIndex: max(chapterIndex, 0),
