@@ -61,4 +61,6 @@ Booklight makes zero network calls. There are no analytics, no telemetry, no clo
 ## Links
 
 - [Development Guide](doc/DEVELOPMENT.md)
+- [App Store Submission Metadata](doc/APP_STORE_METADATA.md)
+- [Privacy Policy Template](doc/PRIVACY_POLICY.md)
 - [Homebrew Tap](https://github.com/anatol/homebrew-tap)
