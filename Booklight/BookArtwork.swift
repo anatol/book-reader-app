@@ -19,6 +19,7 @@ struct BookThumbnailView: View {
     let format: BookFormat
 
     @State private var image: UIImage?
+    private let defaultAspectRatio: CGFloat = 0.72
 
     var body: some View {
         ZStack {
@@ -39,6 +40,7 @@ struct BookThumbnailView: View {
                 placeholder
             }
         }
+        .aspectRatio(thumbnailAspectRatio, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -47,6 +49,13 @@ struct BookThumbnailView: View {
         .task(id: fileURL?.path()) {
             await loadThumbnail()
         }
+    }
+
+    private var thumbnailAspectRatio: CGFloat {
+        guard let image, image.size.height > 0 else {
+            return defaultAspectRatio
+        }
+        return image.size.width / image.size.height
     }
 
     private var placeholder: some View {

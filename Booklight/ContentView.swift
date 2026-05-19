@@ -260,7 +260,7 @@ private struct BookCard: View {
         VStack(alignment: .leading, spacing: 12) {
             ZStack(alignment: .topTrailing) {
                 BookThumbnailView(bookID: book.id, fileURL: fileURL, format: book.format)
-                    .aspectRatio(0.72, contentMode: .fit)
+                    .frame(height: 240)
                     .shadow(color: .black.opacity(0.14), radius: 14, y: 8)
 
                 if book.isFinished {
