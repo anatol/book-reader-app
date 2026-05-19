@@ -266,7 +266,7 @@ private struct BookCard: View {
                 if book.isFinished {
                     statusBadge("Finished", tint: .green)
                         .padding(10)
-                } else if !book.isUnreadLike {
+                } else if book.isActive && !book.isUnreadLike {
                     statusBadge("\(Int((book.progress * 100).rounded()))%", tint: .accentColor)
                         .padding(10)
                 }
@@ -286,7 +286,7 @@ private struct BookCard: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                if !book.isUnreadLike && !book.isFinished {
+                if book.isActive && !book.isUnreadLike && !book.isFinished {
                     ProgressView(value: book.progress)
                         .progressViewStyle(.linear)
                 }
