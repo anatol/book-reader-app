@@ -336,7 +336,7 @@ struct SettingsView: View {
             Form {
                 Section(
                     header: Text("Tracking Directory"),
-                    footer: Text("This folder stores your active books and reading progress.")
+                    footer: Text("Use this as your shared active shelf: it stores the small set of books you are currently reading and their progress. Keep it in ~/Documents to sync with iCloud, or share it between computers with tools like Syncthing.")
                 ) {
                     HStack {
                         if let url = controller.trackingDirectoryURL {
@@ -372,7 +372,7 @@ struct SettingsView: View {
 
                 Section(
                     header: Text("Local Libraries"),
-                    footer: Text("These folders are scanned for books, but their contents are never modified by the app.")
+                    footer: Text("These folders are local to this computer and are not shared across machines. They are usually best for bulk collections or older books; the app scans them for books but never modifies their contents.")
                 ) {
                     List {
                         ForEach(Array(controller.localLibraries.enumerated()), id: \.element) { index, url in
