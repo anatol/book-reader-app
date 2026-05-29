@@ -72,8 +72,8 @@ Booklight is a single-target SwiftUI app (~2,200 lines of Swift) that runs on iP
 
 | File | Role |
 |------|------|
-| `LibraryController.swift` | Core library management: folder scanning, book discovery, progress tracking, state persistence (~650 lines) |
-| `Models.swift` | Data types: `Book`, `LibraryBookRecord`, `BookProgressState`, `LibraryDatabase`, `BookFormat` |
+| `LibraryController.swift` | Core library management: folder scanning, book discovery, progress tracking, state persistence |
+| `Models.swift` | Data types: `Book`, `BookProgressState`, `BookFormat`, hash-cache records, PDF reading position |
 | `ContentView.swift` | Main library UI with search and Active Books / All Books sections |
 | `PDFReaderView.swift` | PDF reading via PDFKit |
 | `EPUBReaderView.swift` | EPUB reading via WKWebView |
@@ -85,21 +85,20 @@ Booklight is a single-target SwiftUI app (~2,200 lines of Swift) that runs on iP
 
 ### Data Persistence
 
-All state is stored as JSON files in a `.book-app/` directory inside the user's library folder (not the app sandbox). This design enables cross-device sync via file-sync tools.
+The tracking directory stores active book copies separately from per-book progress JSON files. This design enables cross-device sync via file-sync tools without requiring the full local library to be shared.
 
 ```text
-<Library>/
-  Book 1.pdf
-  Book 2.epub
-  .book-app/
-    library.json          # Discovered books in this folder
-    books/
-      <book-id>.json      # Per-book reading state
+<Tracking Directory>/
+  books/
+    Book 1.pdf
+    Book 2.epub
+  progress/
+    <book-id>.json        # Per-book reading state
 ```
 
 ### Progress Merge Policy
 
-When two devices have conflicting progress for the same book, the furthest reading position wins. The `lastOpenedAt` timestamp is preserved as the latest value. This is intentionally simple — there is no "went backward on purpose" semantic.
+When two devices have conflicting progress for the same book, the state with the newest `updatedAt` timestamp wins. This preserves intentional backward scrolling or re-reading on another device. The `lastOpenedAt` timestamp is merged independently as the latest value.
 
 ### Project Layout
 
@@ -125,11 +124,10 @@ doc/
 
 ### Current Status
 
-There are no automated unit or UI tests yet. Validation is compile-time only via `xcodebuild`.
+There are focused unit tests for progress normalization, merge policy, canonical progress filenames, path containment, and library sorting. Broader reader and UI workflows are still validated manually.
 
 Suggested areas for future automated tests:
 
-- Unit tests for progress merge logic in `LibraryController`
 - Unit tests for EPUB package parsing in `EPUBSupport`
 - UI smoke tests for library selection, search, and opening a book
 
@@ -138,23 +136,25 @@ Suggested areas for future automated tests:
 Prepare a test folder:
 
 ```text
+TrackingDirectory/
 TestLibrary/
   Sample PDF.pdf
   Sample EPUB.epub
 ```
 
-The app will create `.book-app/` with `library.json` and `books/` on first use.
+Select a separate tracking directory during first launch. When a book is opened, the app creates `books/` and `progress/` inside that tracking directory.
 
 ### Manual Test Checklist
 
 #### 1. First Launch
 
 1. Launch the app.
-2. Confirm the empty state asks for a library folder.
-3. Choose a test folder containing at least one PDF and one EPUB.
-4. Confirm the app shows discovered books.
+2. Confirm the empty state asks for a tracking directory.
+3. Choose `TrackingDirectory/` as the tracking directory.
+4. Open Settings and add `TestLibrary/` as a local library.
+5. Confirm the app shows discovered books.
 
-Expected: the selected folder becomes the active library, `.book-app/library.json` is created.
+Expected: the selected tracking directory is active, and books from the local library appear in the library view.
 
 #### 2. Library Scan
 
@@ -163,7 +163,7 @@ Expected: the selected folder becomes the active library, `.book-app/library.jso
 3. Remove a file from the folder.
 4. Wait or tap Refresh again.
 
-Expected: new books appear, deleted books disappear, `library.json` reflects the current folder.
+Expected: new books appear and deleted books disappear after the next scan.
 
 #### 3. PDF Reading Progress
 
@@ -213,12 +213,12 @@ Expected: search highlights are visible (yellow for all matches, blue/orange for
 
 #### 8. Cross-Device Sync
 
-1. Put the same library folder under Syncthing on two devices.
+1. Put the same tracking directory under Syncthing on two devices.
 2. Open the same book on device A and advance further.
-3. Wait for Syncthing to sync `.book-app/`.
+3. Wait for Syncthing to sync the tracking directory.
 4. Open or refresh the library on device B.
 
-Expected: synced progress appears on device B. If both devices changed progress, the furthest position wins.
+Expected: synced progress appears on device B. If both devices changed progress, the newest saved state wins.
 
 ## Releasing a macOS Build via Homebrew
 

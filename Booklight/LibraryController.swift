@@ -91,7 +91,9 @@ final class LibraryController: ObservableObject {
     private var searchDebounceTask: Task<Void, Never>?
     private var writeTasks: [String: Task<Void, Never>] = [:]
     private var writeTaskIDs: [String: UUID] = [:]
+    private var pendingWriteStates: [String: BookProgressState] = [:]
     private var lastKnownProgressFileModification: [String: Date] = [:]
+    private static let progressWriteDebounce: Duration = .seconds(2)
 
     private var scopedTrackingDirectoryURL: URL?
     private var scopedLocalLibraries: [URL] = []
@@ -118,7 +120,6 @@ final class LibraryController: ObservableObject {
         refreshTask?.cancel()
         pollTask?.cancel()
         searchDebounceTask?.cancel()
-        writeTasks.values.forEach { $0.cancel() }
         scopedTrackingDirectoryURL?.stopAccessingSecurityScopedResource()
         scopedLocalLibraries.forEach { $0.stopAccessingSecurityScopedResource() }
     }
@@ -408,8 +409,8 @@ final class LibraryController: ObservableObject {
         let trackingBooksURL = trackingDirectoryURL.appending(path: "books", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: trackingBooksURL, withIntermediateDirectories: true)
 
-        // If the book is already in the tracking directory, return it
-        if book.fileURL.path().hasPrefix(trackingDirectoryURL.path()) {
+        // If the book is already in the tracking directory, return it.
+        if Self.isFileURL(book.fileURL, containedInDirectory: trackingDirectoryURL) {
             return book
         }
 
@@ -561,6 +562,34 @@ final class LibraryController: ObservableObject {
         }
     }
 
+    func flushPendingProgressWrites() {
+        guard let trackingDirectoryURL, !pendingWriteStates.isEmpty else {
+            return
+        }
+
+        writeTasks.values.forEach { $0.cancel() }
+        writeTasks.removeAll()
+        writeTaskIDs.removeAll()
+
+        var failedError: Error?
+        for (bookID, state) in Array(pendingWriteStates) {
+            do {
+                try Self.persist(state: state.normalized(), at: trackingDirectoryURL)
+                let stateFileURL = Self.progressStateFileURL(for: bookID, trackingDirectoryURL: trackingDirectoryURL)
+                if let modifiedAt = Self.modificationDate(of: stateFileURL) {
+                    lastKnownProgressFileModification[bookID] = modifiedAt
+                }
+                pendingWriteStates[bookID] = nil
+            } catch {
+                failedError = error
+            }
+        }
+
+        if let failedError {
+            errorMessage = failedError.localizedDescription
+        }
+    }
+
     private func startPolling() {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -628,6 +657,7 @@ final class LibraryController: ObservableObject {
         let normalized = mergedLocalState(for: proposedState.bookID, with: proposedState).normalized()
         let bookID = proposedState.bookID
 
+        pendingWriteStates[bookID] = normalized
         writeTasks[bookID]?.cancel()
         let taskID = UUID()
         writeTaskIDs[bookID] = taskID
@@ -641,16 +671,19 @@ final class LibraryController: ObservableObject {
             }
 
             do {
-                try await Task.sleep(for: .milliseconds(350))
+                try await Task.sleep(for: Self.progressWriteDebounce)
+                try Task.checkCancellation()
                 try await Task.detached(priority: .utility) {
                     try Self.persist(state: normalized, at: trackingDirectoryURL)
                 }.value
                 let stateFileURL = Self.progressStateFileURL(for: bookID, trackingDirectoryURL: trackingDirectoryURL)
                 let modifiedAt = Self.modificationDate(of: stateFileURL)
                 await MainActor.run {
+                    guard self?.writeTaskIDs[bookID] == taskID else { return }
                     if let modifiedAt {
                         self?.lastKnownProgressFileModification[bookID] = modifiedAt
                     }
+                    self?.pendingWriteStates[bookID] = nil
                 }
             } catch is CancellationError {
                 return
@@ -748,6 +781,7 @@ final class LibraryController: ObservableObject {
         defer { try? handle.close() }
         var hasher = SHA256()
         while let chunk = try handle.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+            try Task.checkCancellation()
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -768,8 +802,26 @@ final class LibraryController: ObservableObject {
         var generatedBooks: [Book] = []
         var seenHashes = Set<String>()
         var cacheUpdated = false
+        var completedScan = false
 
-        func processDirectory(at url: URL) {
+        func saveCacheIfNeeded() {
+            guard cacheUpdated else { return }
+            saveHashCache(hashCache)
+            cacheUpdated = false
+        }
+
+        defer {
+            if completedScan {
+                let cachedPaths = Array(hashCache.records.keys)
+                for path in cachedPaths where !seenCachePaths.contains(path) {
+                    hashCache.records.removeValue(forKey: path)
+                    cacheUpdated = true
+                }
+            }
+            saveCacheIfNeeded()
+        }
+
+        func processDirectory(at url: URL) throws {
             guard
                 let enumerator = fileManager.enumerator(
                     at: url,
@@ -779,71 +831,76 @@ final class LibraryController: ObservableObject {
             else { return }
 
             for case let fileURL as URL in enumerator {
-                autoreleasepool {
-                    guard let format = BookFormat(url: fileURL) else { return }
-                    guard
-                        let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
-                        values.isRegularFile == true,
-                        let modifiedAt = values.contentModificationDate,
-                        let fileSizeVal = values.fileSize
-                    else { return }
+                try Task.checkCancellation()
+                guard let format = BookFormat(url: fileURL) else { continue }
+                guard
+                    let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]),
+                    values.isRegularFile == true,
+                    let modifiedAt = values.contentModificationDate,
+                    let fileSizeVal = values.fileSize
+                else { continue }
 
-                    let fileSize = Int64(fileSizeVal)
-                    let pathKey = fileURL.path()
-                    seenCachePaths.insert(pathKey)
+                let fileSize = Int64(fileSizeVal)
+                let pathKey = fileURL.path()
+                seenCachePaths.insert(pathKey)
 
-                    let hash: String
-                    if let record = hashCache.records[pathKey], record.fileSize == fileSize,
-                        abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0
-                    {
-                        hash = record.contentHash
-                    } else {
-                        guard let newHash = try? calculateHash(fileURL: fileURL) else { return }
-                        hash = newHash
-                        hashCache.records[pathKey] = FileHashRecord(
-                            path: pathKey,
-                            fileSize: fileSize,
-                            modifiedAt: modifiedAt,
-                            contentHash: hash
-                        )
-                        cacheUpdated = true
-                    }
-
-                    guard !seenHashes.contains(hash) else { return }
-                    seenHashes.insert(hash)
-
-                    generatedBooks.append(
-                        Book(
-                            id: hash,
-                            title: fileURL.deletingPathExtension().lastPathComponent,
-                            fileURL: fileURL,
-                            format: format,
-                            fileSize: fileSize,
-                            addedAt: modifiedAt,
-                            modifiedAt: modifiedAt,
-                            progressState: progressStates[hash]
-                        )
+                let hash: String
+                if let record = hashCache.records[pathKey], record.fileSize == fileSize,
+                    abs(record.modifiedAt.timeIntervalSince(modifiedAt)) < 1.0
+                {
+                    hash = record.contentHash
+                } else {
+                    hash = try calculateHash(fileURL: fileURL)
+                    hashCache.records[pathKey] = FileHashRecord(
+                        path: pathKey,
+                        fileSize: fileSize,
+                        modifiedAt: modifiedAt,
+                        contentHash: hash
                     )
+                    cacheUpdated = true
                 }
+
+                guard !seenHashes.contains(hash) else { continue }
+                seenHashes.insert(hash)
+
+                generatedBooks.append(
+                    Book(
+                        id: hash,
+                        title: fileURL.deletingPathExtension().lastPathComponent,
+                        fileURL: fileURL,
+                        format: format,
+                        fileSize: fileSize,
+                        addedAt: modifiedAt,
+                        modifiedAt: modifiedAt,
+                        progressState: progressStates[hash]
+                    )
+                )
             }
+
+            saveCacheIfNeeded()
         }
 
-        processDirectory(at: trackingBooksDirectory)
+        try processDirectory(at: trackingBooksDirectory)
         for lib in localLibraries {
-            processDirectory(at: lib)
+            try processDirectory(at: lib)
         }
 
-        let cachedPaths = Array(hashCache.records.keys)
-        for path in cachedPaths where !seenCachePaths.contains(path) {
-            hashCache.records.removeValue(forKey: path)
-            cacheUpdated = true
-        }
-        if cacheUpdated {
-            saveHashCache(hashCache)
-        }
-
+        completedScan = true
         generatedBooks.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
         return generatedBooks
+    }
+
+    nonisolated static func isFileURL(_ fileURL: URL, containedInDirectory directoryURL: URL) -> Bool {
+        let fileComponents = fileURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let directoryComponents = directoryURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+
+        guard fileComponents.count > directoryComponents.count else {
+            return false
+        }
+
+        return zip(directoryComponents, fileComponents).allSatisfy { directoryComponent, fileComponent in
+            directoryComponent == fileComponent
+        }
     }
 
     private nonisolated static func persist(state: BookProgressState, at trackingDirectoryURL: URL) throws {
@@ -920,7 +977,7 @@ final class LibraryController: ObservableObject {
 
         return bookID.allSatisfy { char in
             switch char {
-            case "0"..."9", "a"..."f", "A"..."F":
+            case "0" ... "9", "a" ... "f", "A" ... "F":
                 return true
             default:
                 return false

@@ -91,7 +91,7 @@ final class BookProgressTests: XCTestCase {
         XCTAssertEqual(merged.updatedAt, newDate)
     }
 
-    func testMergeStatesPreservesLatestOpenDateAndFinishedStatus() {
+    func testMergeStatesAllowsNewerBackwardPosition() {
         var finishedState = BookProgressState.epub(
             bookID: "merge-finished",
             chapterIndex: 3,
@@ -112,7 +112,8 @@ final class BookProgressTests: XCTestCase {
 
         let merged = LibraryController.mergeStates(local: finishedState, remote: newerUnfinishedState)
 
-        XCTAssertTrue(merged.isFinished)
+        XCTAssertFalse(merged.isFinished)
+        XCTAssertEqual(merged.pdfPageIndex, 1)
         XCTAssertEqual(merged.lastOpenedAt, newDate)
         XCTAssertEqual(merged.updatedAt, newDate)
     }
@@ -129,5 +130,14 @@ final class BookProgressTests: XCTestCase {
         XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(syncConflict))
         XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongExt))
         XCTAssertFalse(LibraryController.isCanonicalProgressStateFileName(wrongLength))
+    }
+
+    func testTrackingDirectoryContainmentUsesPathComponents() {
+        let trackingDirectory = URL(fileURLWithPath: "/tmp/Books")
+        let bookInsideTrackingDirectory = URL(fileURLWithPath: "/tmp/Books/books/example.pdf")
+        let bookInSiblingDirectory = URL(fileURLWithPath: "/tmp/BooksExtra/books/example.pdf")
+
+        XCTAssertTrue(LibraryController.isFileURL(bookInsideTrackingDirectory, containedInDirectory: trackingDirectory))
+        XCTAssertFalse(LibraryController.isFileURL(bookInSiblingDirectory, containedInDirectory: trackingDirectory))
     }
 }

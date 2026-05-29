@@ -35,7 +35,7 @@ When you open a book, it becomes part of your **Active Books** set. Reading prog
 
 The tracking directory can be shared **independently** from your full library. This is the key design: you can sync just your active books and their progress to a mobile device where storage is limited, while keeping the full collection on your desktop.
 
-Use [Syncthing](https://syncthing.net/) or any file-sync tool to share the tracking directory. When the same book is read on multiple devices, progress merges automatically — the furthest reading position wins.
+Use [Syncthing](https://syncthing.net/) or any file-sync tool to share the tracking directory. When the same book is read on multiple devices, progress merges automatically: the most recently updated reading position wins, so intentionally scrolling backward on one device is preserved.
 
 ## Installation
 
