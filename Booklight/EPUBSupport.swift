@@ -118,11 +118,11 @@ enum EPUBPreparation {
 /// Combines all EPUB spine chapters into a single HTML document for continuous scrolling.
 /// Each chapter's body content is extracted, resource paths are rewritten to be relative
 /// to the extraction root, and everything is wrapped in chapter dividers.
-/// The result is cached as `_combined-v2.html` in the extraction directory — it's automatically
+/// The result is cached as `_combined-v3.html` in the extraction directory — it's automatically
 /// invalidated when the EPUB is re-extracted (the directory is wiped on version change).
 enum EPUBCombiner {
     /// Builds (or returns cached) combined HTML from all spine items.
-    /// - Returns: URL of the `_combined-v2.html` file in the extraction directory.
+    /// - Returns: URL of the `_combined-v3.html` file in the extraction directory.
     static func buildCombinedHTML(
         spine: [EPUBDocument.SpineItem],
         extractedRootURL: URL
@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v2.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v3.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -190,9 +190,9 @@ enum EPUBCombiner {
         }
 
         // Reading layout injected after the EPUB's own stylesheets so it wins on
-        // equal specificity. It turns the raw, full-bleed XHTML into a centered,
-        // page-like reading column with comfortable margins and a readable base
-        // size — mirroring the look of the built-in PDF viewer.
+        // equal specificity. It turns the raw, full-bleed XHTML into a clean
+        // reading page that fills the viewport width with small side margins and
+        // a readable base size.
         html += """
             <style>
             :root { color-scheme: light; }
@@ -204,47 +204,41 @@ enum EPUBCombiner {
                 font-size: 20px;
                 -webkit-text-size-adjust: 100%;
                 text-size-adjust: 100%;
-                /* Page "gutter" shown around the column on wide screens, mirroring
-                   the gray backdrop of the built-in PDF viewer. */
-                background-color: #e9e9ee;
+                background-color: #ffffff;
                 /* Guard against any single element forcing horizontal scrolling,
                    which previously made the whole page shift sideways and clipped
                    the first characters of each line. */
                 overflow-x: hidden;
             }
 
-            @media (prefers-color-scheme: dark) {
-                html { background-color: #1c1c1e; }
-            }
-
-            /* The reading column: a centered, page-like surface that overrides
-               whatever body box model the EPUB's own CSS sets. */
+            /* The reading surface: a plain page that fills the viewport width so
+               wide screens use their space instead of showing empty gutters.
+               Overrides whatever box model the EPUB's own CSS sets. */
             body {
                 box-sizing: border-box;
-                max-width: 36rem !important;
+                max-width: none !important;
                 width: auto !important;
                 /* Some EPUBs pin body to height:100% (meant for paginated chapters);
                    force auto so the page surface grows to cover all the content. */
                 height: auto !important;
-                margin: 0 auto !important;
-                /* Generous reading margins; honor device safe areas (notch / home
-                   indicator) because the reader runs full-screen with no chrome. */
+                margin: 0 !important;
+                /* Honor device safe areas (notch / home indicator) since the reader
+                   runs full-screen with no chrome. Side margins stay small but scale
+                   gently with width (4vw) so the text reflows to fill the screen. */
                 padding-top: max(2.5rem, env(safe-area-inset-top)) !important;
                 padding-bottom: max(6rem, env(safe-area-inset-bottom)) !important;
-                padding-left: max(1.5rem, env(safe-area-inset-left)) !important;
-                padding-right: max(1.5rem, env(safe-area-inset-right)) !important;
+                padding-left: max(env(safe-area-inset-left), 24px, 4vw) !important;
+                padding-right: max(env(safe-area-inset-right), 24px, 4vw) !important;
                 background-color: #ffffff;
                 color: #1a1a1a;
                 line-height: 1.6;
-                /* Wrap long words / URLs instead of overflowing the column. */
+                /* Wrap long words / URLs instead of overflowing the page. */
                 overflow-wrap: break-word;
                 word-wrap: break-word;
                 -webkit-hyphens: auto;
                 hyphens: auto;
                 -webkit-font-smoothing: antialiased;
                 text-rendering: optimizeLegibility;
-                /* Subtle lift so the column reads as a page floating on the gutter. */
-                box-shadow: 0 0 1rem rgba(0, 0, 0, 0.12);
             }
 
             /* Keep media within the column — fixed-width images, figures and SVGs
