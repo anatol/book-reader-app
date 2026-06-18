@@ -153,14 +153,20 @@ final class EPUBScrollProxy: ObservableObject {
         applyFontSize()
     }
 
+    /// The reading base font size (px) that corresponds to 100%. The combined HTML
+    /// sets the same value on <html>, so the percentage controls scale a comfortable
+    /// default rather than the browser's small 16px. Kept in sync with EPUBSupport's CSS.
+    static let baseFontPx = 20
+
     /// Injects CSS to override the root font size, preserving the current reading position.
-    /// Uses both font-size on <html> (works for em/rem-based EPUBs) and
-    /// -webkit-text-size-adjust on <body> (works for EPUBs using absolute px sizing).
+    /// Uses both font-size on <html> in px (works for em/rem-based EPUBs) and
+    /// -webkit-text-size-adjust on <body> as a percentage (works for EPUBs using absolute px sizing).
     ///
     /// To keep the reading position stable across the text reflow caused by a font size change,
     /// we record the progress ratio (scrollY / maxScroll) before the change and restore
     /// the equivalent scroll offset after the DOM reflows.
     func applyFontSize() {
+        let pixels = fontSizePercent * Self.baseFontPx / 100
         let js = """
             (function() {
                 // Remember the current reading position as a fraction of total scrollable height.
@@ -169,7 +175,7 @@ final class EPUBScrollProxy: ObservableObject {
                 var progressRatio = window.scrollY / maxScroll;
 
                 // Apply the new font size.
-                root.style.fontSize = '\(fontSizePercent)%';
+                root.style.fontSize = '\(pixels)px';
                 document.body.style.webkitTextSizeAdjust = '\(fontSizePercent)%';
 
                 // After the DOM reflows, restore the reading position.
@@ -770,11 +776,14 @@ private struct EPUBWebView: UIViewRepresentable {
             // final layout.
             let fontSizeJS: String
             if initialFontSizePercent != 100 {
+                let pixels = initialFontSizePercent * EPUBScrollProxy.baseFontPx / 100
                 fontSizeJS = """
-                    document.documentElement.style.fontSize = '\(initialFontSizePercent)%';
+                    document.documentElement.style.fontSize = '\(pixels)px';
                     document.body.style.webkitTextSizeAdjust = '\(initialFontSizePercent)%';
                     """
             } else {
+                // At 100% the combined HTML's base size already applies; no override
+                // needed, which also avoids an extra reflow before the initial scroll.
                 fontSizeJS = ""
             }
 
