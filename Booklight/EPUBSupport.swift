@@ -130,7 +130,7 @@ enum EPUBCombiner {
         // The filename carries a layout version suffix so that bumping the reading
         // CSS below regenerates the combined document for already-extracted books
         // (rebuilding from the cached chapters is cheap — no re-unzip required).
-        let combinedURL = extractedRootURL.appending(path: "_combined-v3.html")
+        let combinedURL = extractedRootURL.appending(path: "_combined-v4.html")
 
         // If the combined file already exists (from a previous open), reuse it.
         if FileManager.default.fileExists(atPath: combinedURL.path()) {
@@ -254,6 +254,10 @@ enum EPUBCombiner {
                 overflow-wrap: break-word;
             }
             table { max-width: 100%; }
+
+            /* Prevent EPUB link colors from bleeding into block elements wrapped
+               in <a> tags (common in textbooks for navigation anchors). */
+            a { color: inherit; }
 
             /* Divider between chapters for visual separation */
             .epub-chapter-divider {
